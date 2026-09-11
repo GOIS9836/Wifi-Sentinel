@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Glowing Shield Outer Outline -->
+    <path
+        android:pathData="M54,22 L76,30 C76,52 66,68 54,76 C42,68 32,52 32,30 Z"
+        android:strokeWidth="2.5"
+        android:strokeColor="#00E5FF">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="22"
+                android:endX="54"
+                android:endY="76"
+                android:type="linear">
+                <item android:color="#3300E5FF" android:offset="0.0" />
+                <item android:color="#1A0D1B2A" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Wi-Fi Waves inside Shield -->
+    <!-- Wave 3 (Top) -->
+    <path
+        android:pathData="M40,41 C48,34 60,34 68,41"
+        android:strokeWidth="3.2"
+        android:strokeColor="#00E5FF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Wave 2 (Middle) -->
+    <path
+        android:pathData="M44.5,47.5 C49.5,43 58.5,43 63.5,47.5"
+        android:strokeWidth="3.2"
+        android:strokeColor="#00F5D4"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Wave 1 (Inner) -->
+    <path
+        android:pathData="M49,54 C51.5,51.5 56.5,51.5 59,54"
+        android:strokeWidth="3.2"
+        android:strokeColor="#70EE9C"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+
+    <!-- Center Dot / Beacon -->
+    <path
+        android:pathData="M54,61m-2.8,0a2.8,2.8 0 1,0 5.6,0a2.8,2.8 0 1,0 -5.6,0"
+        android:fillColor="#70EE9C" />
+
+    <!-- AI Sparkle Core Badge at bottom center of shield -->
+    <path
+        android:pathData="M54,71 L55.5,74 L58.5,75.5 L55.5,77 L54,80 L52.5,77 L49.5,75.5 L52.5,74 Z"
+        android:fillColor="#00E5FF" />
+</vector>

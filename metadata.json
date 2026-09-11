@@ -1,0 +1,6 @@
+{
+  "name": "WiFi Sentinel",
+  "description": "AI-powered Wi-Fi management and optimization tool with real-time signal strength analysis and unauthorized network access detection.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

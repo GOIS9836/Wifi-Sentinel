@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108"
+                android:type="linear">
+                <item android:color="#0B132B" android:offset="0.0" />
+                <item android:color="#1C2541" android:offset="0.5" />
+                <item android:color="#0D1B2A" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Subtle grid lines for high-tech telemetry feeling -->
+    <path
+        android:pathData="M18,0v108 M36,0v108 M54,0v108 M72,0v108 M90,0v108 M0,18h108 M0,36h108 M0,54h108 M0,72h108 M0,90h108"
+        android:strokeColor="#123A5C"
+        android:strokeWidth="0.6"
+        android:strokeAlpha="0.35" />
+    <!-- Cyber radar glowing pulse circle -->
+    <path
+        android:pathData="M54,54m-38,0a38,38 0 1,0 76,0a38,38 0 1,0 -76,0"
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="0.8"
+        android:strokeAlpha="0.25" />
+</vector>
