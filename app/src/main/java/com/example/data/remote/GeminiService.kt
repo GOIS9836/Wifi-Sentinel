@@ -5,6 +5,7 @@ import com.example.BuildConfig
 import com.example.data.model.AiOptimizationReport
 import com.example.data.model.DiscoveredDevice
 import com.example.data.model.NearbyAccessPoint
+import com.example.data.model.NetworkHardeningRecommendation
 import com.example.data.model.WifiConnectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -252,4 +253,150 @@ class GeminiService {
             timestamp = System.currentTimeMillis()
         )
     }
+
+    suspend fun generateNetworkHardeningRecommendations(
+        unknownDevices: List<DiscoveredDevice>,
+        telemetry: WifiConnectionState
+    ): List<NetworkHardeningRecommendation> = withContext(Dispatchers.IO) {
+        if (unknownDevices.isEmpty()) return@withContext emptyList()
+
+        if (!isApiKeyConfigured) {
+            return@withContext generateLocalHeuristicHardening(unknownDevices, telemetry)
+        }
+
+        val devicesDescription = unknownDevices.joinToString("\n") { dev ->
+            "- IP: ${dev.ip}, MAC: ${dev.macAddress}, Vendor: ${dev.vendor}, Hostname: ${dev.hostname}, Confidence: ${dev.confidencePercent}%, Probes: ${dev.corroborationVector}, OpenPorts: ${dev.openPorts.joinToString()}"
+        }
+
+        val prompt = """
+            You are a Principal Cybersecurity Architect and Zero-Trust Network Engineer.
+            Unknown/unauthorized devices were detected during real-time network scanning:
+            - Connected SSID: ${telemetry.ssid}
+            - Security Protocol: ${telemetry.securityProtocol}
+            - Subnet Gateway: ${telemetry.gatewayIp}
+            - Subnet: ${telemetry.ipAddress} / ${telemetry.subnetMask}
+
+            Detected Unknown Devices:
+            $devicesDescription
+
+            For each unknown device, provide an actionable, production-grade Zero-Trust Security Hardening Plan formatted strictly as a JSON array of objects with keys:
+            [
+              {
+                "targetDeviceIp": "<exact ip of device>",
+                "targetDeviceMac": "<exact mac of device>",
+                "vendor": "<vendor or OEM>",
+                "riskLevel": "<CRITICAL | HIGH | MEDIUM | LOW>",
+                "threatAssessment": "<specific analysis of attack surface, lateral movement risk, or rogue presence>",
+                "firewallRules": [
+                  "<exact iptables or nftables command to drop and log traffic>",
+                  "<second specific firewall or ebtables rule>"
+                ],
+                "routerHardeningSteps": [
+                  "<step 1 for router/AP (e.g. enable 802.11w PMF, AP Client Isolation, disable WPS/UPnP)>",
+                  "<step 2 for router/AP>"
+                ],
+                "vlanOrIsolationAction": "<specific VLAN segmentation or guest subnet quarantine directive>",
+                "zeroTrustAction": "<specific 802.1X, MAC-filtering ACL, or static DHCP NULL-route action>"
+              }
+            ]
+            Return ONLY raw JSON without markdown code blocks.
+        """.trimIndent()
+
+        try {
+            val raw = callGeminiApi(prompt)
+            parseHardeningRecommendations(raw, unknownDevices, telemetry)
+        } catch (e: Exception) {
+            Log.w("GeminiService", "Gemini API hardening call failed, using heuristic engine: ${e.localizedMessage}")
+            generateLocalHeuristicHardening(unknownDevices, telemetry)
+        }
+    }
+
+    private fun parseHardeningRecommendations(
+        jsonStr: String,
+        unknownDevices: List<DiscoveredDevice>,
+        telemetry: WifiConnectionState
+    ): List<NetworkHardeningRecommendation> {
+        val rawText = extractText(jsonStr).replace("```json", "").replace("```", "").trim()
+        return try {
+            val jsonArray = JSONArray(rawText)
+            val list = mutableListOf<NetworkHardeningRecommendation>()
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val fwArray = obj.optJSONArray("firewallRules")
+                val fwList = mutableListOf<String>()
+                if (fwArray != null) {
+                    for (j in 0 until fwArray.length()) {
+                        fwList.add(fwArray.getString(j))
+                    }
+                }
+                val routerArray = obj.optJSONArray("routerHardeningSteps")
+                val routerList = mutableListOf<String>()
+                if (routerArray != null) {
+                    for (j in 0 until routerArray.length()) {
+                        routerList.add(routerArray.getString(j))
+                    }
+                }
+
+                list.add(
+                    NetworkHardeningRecommendation(
+                        targetDeviceIp = obj.optString("targetDeviceIp", "Unknown IP"),
+                        targetDeviceMac = obj.optString("targetDeviceMac", "Unknown MAC"),
+                        vendor = obj.optString("vendor", "Generic Host"),
+                        riskLevel = obj.optString("riskLevel", "CRITICAL"),
+                        threatAssessment = obj.optString("threatAssessment", "Unauthorized host on subnet ${telemetry.ssid}."),
+                        firewallRules = if (fwList.isNotEmpty()) fwList else listOf("iptables -A FORWARD -s ${obj.optString("targetDeviceIp")} -j DROP"),
+                        routerHardeningSteps = if (routerList.isNotEmpty()) routerList else listOf("Enable AP Client Isolation", "Enforce WPA3/WPA2-Enterprise with 802.11w PMF"),
+                        vlanOrIsolationAction = obj.optString("vlanOrIsolationAction", "Isolate to Quarantined VLAN (VLAN ID 99)"),
+                        zeroTrustAction = obj.optString("zeroTrustAction", "Enforce 802.1X port authorization and assign NULL default gateway")
+                    )
+                )
+            }
+            if (list.isNotEmpty()) list else generateLocalHeuristicHardening(unknownDevices, telemetry)
+        } catch (e: Exception) {
+            Log.w("GeminiService", "Failed to parse JSON hardening recommendations, falling back to heuristics", e)
+            generateLocalHeuristicHardening(unknownDevices, telemetry)
+        }
+    }
+
+    private fun generateLocalHeuristicHardening(
+        unknownDevices: List<DiscoveredDevice>,
+        telemetry: WifiConnectionState
+    ): List<NetworkHardeningRecommendation> {
+        return unknownDevices.map { dev ->
+            val isRogueGw = dev.isRogueGateway
+            val isClone = dev.isDuplicateMac || dev.isDuplicateIp
+            val risk = when {
+                isRogueGw -> "CRITICAL"
+                dev.confidencePercent >= 90 -> "CRITICAL"
+                isClone -> "HIGH"
+                else -> "HIGH"
+            }
+            NetworkHardeningRecommendation(
+                targetDeviceIp = dev.ip,
+                targetDeviceMac = dev.macAddress,
+                vendor = dev.vendor.ifBlank { "Unidentified Vendor" },
+                riskLevel = risk,
+                threatAssessment = when {
+                    isRogueGw -> "Rogue Gateway detected attempting default gateway ARP hijacking on ${telemetry.ssid}. High risk of full Man-in-the-Middle (MitM) credential interception."
+                    isClone -> "Identity collision / MAC clone detected. Potential Layer-2 spoofing attack against authorized hosts on ${telemetry.ipAddress}."
+                    dev.openPorts.isNotEmpty() -> "Unrecognized host exposing active network services (${dev.openPorts.joinToString()}). Potential vulnerability scan or rogue IoT pivot node."
+                    else -> "Unauthenticated entity detected on private subnet. Device bypassed initial perimeter authorization."
+                },
+                firewallRules = listOf(
+                    "iptables -I FORWARD -s ${dev.ip} -j DROP",
+                    "iptables -I INPUT -s ${dev.ip} -j DROP",
+                    "ebtables -A FORWARD -s ${dev.macAddress} -j DROP"
+                ),
+                routerHardeningSteps = listOf(
+                    "Enable AP Client Isolation on '${telemetry.ssid}' to prevent east-west lateral reconnaissance.",
+                    "Enforce 802.11w Protected Management Frames (PMF) on gateway ${telemetry.gatewayIp} to block deauthentication attacks.",
+                    "Disable WPS (Wi-Fi Protected Setup) and UPnP (Universal Plug and Play) in router admin console.",
+                    "Rotate WPA2/WPA3 Pre-Shared Key (PSK) and verify router firmware integrity."
+                ),
+                vlanOrIsolationAction = "Isolate MAC ${dev.macAddress} into an isolated IoT Quarantine VLAN (VLAN ID 99) with zero LAN or WAN forward access.",
+                zeroTrustAction = "Implement MAC-Filtering Access Control List (ACL) and bind static DHCP reservation to 0.0.0.0 (NULL Route)."
+            )
+        }
+    }
 }
+

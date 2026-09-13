@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -9,13 +10,16 @@ import android.os.VibratorManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
+import com.example.data.local.NetworkDeviceEntity
 import com.example.data.local.SecurityAlertEntity
 import com.example.data.local.SignalLogEntity
 import com.example.data.model.AiOptimizationReport
+import com.example.data.model.BackgroundDetectionStatus
 import com.example.data.model.BtDeviceType
 import com.example.data.model.BtPerimeterDevice
 import com.example.data.model.ChannelCongestion
 import com.example.data.model.ChatMessage
+import com.example.data.model.DeviceWhitelistAuditResult
 import com.example.data.model.DiscoveredDevice
 import com.example.data.model.DuplicationGuardStatus
 import com.example.data.model.DuplicationViolation
@@ -23,14 +27,20 @@ import com.example.data.model.DuplicationViolationType
 import com.example.data.model.GatewaySwitchType
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
+import com.example.data.model.NetworkHardeningRecommendation
+import com.example.data.model.NetworkSummaryReport
 import com.example.data.model.ThreatLevel
+import com.example.data.model.WhitelistAuditStatus
 import com.example.data.model.WifiConnectionState
 import com.example.data.model.isLocallyAdministeredMac
 import com.example.data.remote.GeminiService
 import com.example.data.repository.WifiRepository
 import com.example.service.BluetoothSentryScanner
+import com.example.service.DeviceWhitelistComparisonEngine
 import com.example.service.FirewallAclRule
 import com.example.service.NetworkAccessEnforcer
+import com.example.service.NetworkReportGenerator
+import com.example.service.SecurityNotificationDispatcher
 import com.example.service.WiFiManager
 import com.example.service.WifiScannerService
 import com.example.service.ZeroToleranceDuplicationGuard
@@ -40,8 +50,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.util.Collections
 import kotlin.random.Random
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -171,6 +183,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val totalPacketsDropped: StateFlow<Long> = networkAccessEnforcer.totalPacketsDropped
     val totalBytesBlocked: StateFlow<Long> = networkAccessEnforcer.totalBytesBlocked
 
+    // Background Detection Logic & Gemini Hardening States
+    private val _backgroundDetectionStatus = MutableStateFlow(
+        BackgroundDetectionStatus(
+            isRunning = true,
+            scanIntervalSeconds = 20,
+            unknownDevicesDetected = 0,
+            activeHardeningDirectives = 0,
+            lastScanTimestamp = System.currentTimeMillis(),
+            isAiAnalyzing = false
+        )
+    )
+    val backgroundDetectionStatus: StateFlow<BackgroundDetectionStatus> = _backgroundDetectionStatus.asStateFlow()
+
+    private val _networkHardeningRecommendations = MutableStateFlow<List<NetworkHardeningRecommendation>>(emptyList())
+    val networkHardeningRecommendations: StateFlow<List<NetworkHardeningRecommendation>> = _networkHardeningRecommendations.asStateFlow()
+
+    private val _selectedHardeningRecommendation = MutableStateFlow<NetworkHardeningRecommendation?>(null)
+    val selectedHardeningRecommendation: StateFlow<NetworkHardeningRecommendation?> = _selectedHardeningRecommendation.asStateFlow()
+
+    private val processedUnknownMacsForAi = mutableSetOf<String>()
+
+    // Known-Device Whitelist Verification & Notification States
+    private val _whitelistAuditResult = MutableStateFlow(DeviceWhitelistAuditResult())
+    val whitelistAuditResult: StateFlow<DeviceWhitelistAuditResult> = _whitelistAuditResult.asStateFlow()
+
+    lateinit var whitelistedDevices: StateFlow<List<NetworkDeviceEntity>>
+    lateinit var whitelistedCount: StateFlow<Int>
+
+    private val _isAutoNotifyEnabled = MutableStateFlow(true)
+    val isAutoNotifyEnabled: StateFlow<Boolean> = _isAutoNotifyEnabled.asStateFlow()
+
+    // Network Health and Security Incident Summary Report State
+    private val _networkSummaryReport = MutableStateFlow(NetworkSummaryReport())
+    val networkSummaryReport: StateFlow<NetworkSummaryReport> = _networkSummaryReport.asStateFlow()
+
+    private val _isGeneratingReport = MutableStateFlow(false)
+    val isGeneratingReport: StateFlow<Boolean> = _isGeneratingReport.asStateFlow()
+
+    private val alertedUnknownMacs = Collections.synchronizedSet(mutableSetOf<String>())
+
     private var telemetryTickerJob: Job? = null
     private var shieldWatcherJob: Job? = null
 
@@ -193,12 +245,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         unacknowledgedAlertsCount = repository.unacknowledgedAlertsCount.stateIn(
             viewModelScope, SharingStarted.WhileSubscribed(5000), 0
         )
+        whitelistedDevices = repository.whitelistedDevicesFlow.stateIn(
+            viewModelScope, SharingStarted.Eagerly, emptyList()
+        )
+        whitelistedCount = repository.whitelistedCountFlow.stateIn(
+            viewModelScope, SharingStarted.Eagerly, 0
+        )
+
+        SecurityNotificationDispatcher.initNotificationChannel(application)
 
         startTelemetryTicker()
         startShieldWatcher()
         startBtZeroTolerancePerimeterSentry()
         refreshSubnetDevices()
         refreshNearbyAPs()
+        generateSummaryReport()
     }
 
     private fun startTelemetryTicker() {
@@ -303,8 +364,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
 
-                    _discoveredDevices.value = finalDevices
-                    val currentUnauthorized = finalDevices.count {
+                    // Background Detection: Flag unknown devices and tag with AI Hardening Notes
+                    val taggedDevices = finalDevices.map { dev ->
+                        val isUnknown = !dev.isAuthorized && !dev.isSelf && !dev.isGateway
+                        if (isUnknown) {
+                            val rec = _networkHardeningRecommendations.value.find { 
+                                it.targetDeviceIp == dev.ip || it.targetDeviceMac.equals(dev.macAddress, ignoreCase = true) 
+                            }
+                            dev.copy(
+                                isFlaggedUnknown = true,
+                                aiHardeningNote = rec?.threatAssessment ?: dev.aiHardeningNote
+                            )
+                        } else {
+                            dev.copy(isFlaggedUnknown = false)
+                        }
+                    }
+
+                    _discoveredDevices.value = taggedDevices
+
+                    val unknownList = taggedDevices.filter { it.isFlaggedUnknown }
+                    _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(
+                        unknownDevicesDetected = unknownList.size,
+                        lastScanTimestamp = System.currentTimeMillis()
+                    )
+
+                    // Trigger Gemini hardening for new unknown devices detected in background
+                    val newUnknowns = unknownList.filter { !processedUnknownMacsForAi.contains(it.macAddress.uppercase()) }
+                    if (newUnknowns.isNotEmpty() && !_backgroundDetectionStatus.value.isAiAnalyzing) {
+                        newUnknowns.forEach { processedUnknownMacsForAi.add(it.macAddress.uppercase()) }
+                        triggerGeminiHardeningAnalysis(newUnknowns)
+                    }
+
+                    // Execute Known-Device Whitelist Comparison Logic Flow & Notification Trigger
+                    processWhitelistComparison(taggedDevices, triggerNotifications = true)
+
+                    val currentUnauthorized = taggedDevices.count {
                         !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed
                     }
 
@@ -313,6 +407,113 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+        }
+    }
+
+    fun toggleBackgroundDetection(enabled: Boolean) {
+        _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(isRunning = enabled)
+        if (enabled) {
+            toggleRealTimeShield(true)
+        }
+    }
+
+    fun selectHardeningRecommendation(rec: NetworkHardeningRecommendation?) {
+        _selectedHardeningRecommendation.value = rec
+    }
+
+    fun triggerManualHardeningAudit() {
+        val unknowns = _discoveredDevices.value.filter { it.isFlaggedUnknown || (!it.isAuthorized && !it.isSelf && !it.isGateway) }
+        val targetList = if (unknowns.isNotEmpty()) unknowns else {
+            _discoveredDevices.value.filter { !it.isSelf && !it.isGateway }
+        }
+        if (targetList.isNotEmpty()) {
+            triggerGeminiHardeningAnalysis(targetList, forceRefresh = true)
+        }
+    }
+
+    private fun triggerGeminiHardeningAnalysis(
+        unknownDevices: List<DiscoveredDevice>,
+        forceRefresh: Boolean = false
+    ) {
+        viewModelScope.launch {
+            _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(isAiAnalyzing = true)
+            try {
+                val recommendations = repository.generateNetworkHardeningRecommendations(
+                    unknownDevices = unknownDevices,
+                    state = _wifiState.value
+                )
+                if (recommendations.isNotEmpty()) {
+                    val updatedList = if (forceRefresh) {
+                        recommendations
+                    } else {
+                        val existing = _networkHardeningRecommendations.value.toMutableList()
+                        recommendations.forEach { newRec ->
+                            existing.removeAll { it.targetDeviceIp == newRec.targetDeviceIp }
+                            existing.add(0, newRec)
+                        }
+                        existing
+                    }
+                    _networkHardeningRecommendations.value = updatedList
+                    _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(
+                        activeHardeningDirectives = updatedList.size,
+                        isAiAnalyzing = false
+                    )
+
+                    // Attach notes to discovered devices
+                    _discoveredDevices.value = _discoveredDevices.value.map { dev ->
+                        val matchedRec = updatedList.find { 
+                            it.targetDeviceIp == dev.ip || it.targetDeviceMac.equals(dev.macAddress, ignoreCase = true) 
+                        }
+                        if (matchedRec != null) {
+                            dev.copy(
+                                isFlaggedUnknown = true,
+                                aiHardeningNote = "${matchedRec.riskLevel}: ${matchedRec.threatAssessment}"
+                            )
+                        } else dev
+                    }
+                } else {
+                    _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(isAiAnalyzing = false)
+                }
+            } catch (e: Exception) {
+                _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(isAiAnalyzing = false)
+            }
+        }
+    }
+
+    fun simulateUnknownDeviceIntrusion() {
+        viewModelScope.launch {
+            val subnetBase = _wifiState.value.ipAddress.substringBeforeLast(".")
+            val randomHost = (140..199).random()
+            val fakeIp = "$subnetBase.$randomHost"
+            val fakeMac = "DE:AD:BE:EF:${Random.nextInt(10, 99)}:${Random.nextInt(10, 99)}"
+            val fakeDevice = DiscoveredDevice(
+                ip = fakeIp,
+                macAddress = fakeMac,
+                vendor = "Rogue Microcontroller (ESP32-S3 Cam)",
+                isAuthorized = false,
+                isBlocked = true,
+                responseTimeMs = 12L,
+                threatLevel = ThreatLevel.UNAUTHORIZED_INTRUDER,
+                confidencePercent = 99,
+                corroborationVector = "Rogue Probe Vector • AI Flagged",
+                isFlaggedUnknown = true,
+                openPorts = listOf(80, 554, 8080)
+            )
+
+            val current = _discoveredDevices.value.toMutableList()
+            current.removeAll { it.ip == fakeIp }
+            current.add(0, fakeDevice)
+            _discoveredDevices.value = current
+
+            _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(
+                unknownDevicesDetected = _backgroundDetectionStatus.value.unknownDevicesDetected + 1
+            )
+
+            // Trigger whitelist comparison flow & notification
+            processWhitelistComparison(current, triggerNotifications = true)
+
+            triggerIntruderHapticAlert()
+            triggerGeminiHardeningAnalysis(listOf(fakeDevice), forceRefresh = false)
         }
     }
 
@@ -367,8 +568,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                _discoveredDevices.value = finalDevices
-                val unauthorized = finalDevices.filter { !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed }
+                // Tag unknown devices
+                val taggedDevices = finalDevices.map { dev ->
+                    val isUnknown = !dev.isAuthorized && !dev.isSelf && !dev.isGateway
+                    if (isUnknown) {
+                        val rec = _networkHardeningRecommendations.value.find { 
+                            it.targetDeviceIp == dev.ip || it.targetDeviceMac.equals(dev.macAddress, ignoreCase = true) 
+                        }
+                        dev.copy(
+                            isFlaggedUnknown = true,
+                            aiHardeningNote = rec?.threatAssessment ?: dev.aiHardeningNote
+                        )
+                    } else {
+                        dev.copy(isFlaggedUnknown = false)
+                    }
+                }
+
+                _discoveredDevices.value = taggedDevices
+
+                val unknownList = taggedDevices.filter { it.isFlaggedUnknown }
+                _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(
+                    unknownDevicesDetected = unknownList.size,
+                    lastScanTimestamp = System.currentTimeMillis()
+                )
+
+                // Execute Known-Device Whitelist Comparison Logic Flow & Notification Trigger
+                processWhitelistComparison(taggedDevices, triggerNotifications = true)
+
+                val unauthorized = taggedDevices.filter { !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed }
                 if (unauthorized.isNotEmpty()) {
                     triggerIntruderHapticAlert()
                 }
@@ -416,15 +643,125 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val newStatus = !device.isAuthorized
             repository.setDeviceAuthorized(device.macAddress, newStatus)
-            _discoveredDevices.value = _discoveredDevices.value.map {
+            val updated = _discoveredDevices.value.map {
                 if (it.macAddress == device.macAddress) {
                     it.copy(
                         isAuthorized = newStatus,
+                        isFlaggedUnknown = !newStatus,
                         threatLevel = if (newStatus) ThreatLevel.SAFE else ThreatLevel.UNAUTHORIZED_INTRUDER
                     )
                 } else it
             }
+            _discoveredDevices.value = updated
+            processWhitelistComparison(updated, triggerNotifications = !newStatus)
         }
+    }
+
+    suspend fun processWhitelistComparison(
+        devices: List<DiscoveredDevice>,
+        triggerNotifications: Boolean = true
+    ): DeviceWhitelistAuditResult {
+        val whitelist = repository.getWhitelistedDevicesList()
+        val audit = DeviceWhitelistComparisonEngine.compareConnectedAgainstWhitelist(
+            connectedDevices = devices,
+            whitelist = whitelist,
+            currentIp = _wifiState.value.ipAddress,
+            gatewayIp = _lockedGatewayIp.value.ifBlank { _wifiState.value.gatewayIp },
+            gatewayMac = _lockedGatewayMac.value,
+            previouslyAlertedMacs = alertedUnknownMacs,
+            suppressedMacs = suppressedDeviceMacs
+        )
+
+        _whitelistAuditResult.value = audit
+
+        if (triggerNotifications && _isAutoNotifyEnabled.value && audit.newlyDetectedUnknowns.isNotEmpty()) {
+            audit.newlyDetectedUnknowns.forEach { unknownDev ->
+                alertedUnknownMacs.add(unknownDev.macAddress.uppercase())
+
+                // 1. Dispatch rich Android system notification
+                SecurityNotificationDispatcher.postUnknownDeviceNotification(
+                    getApplication(),
+                    unknownDev
+                )
+
+                // 2. Persist in Room security alert feed
+                repository.recordSecurityAlert(
+                    title = "🚨 Unknown Device Detected: ${unknownDev.ip}",
+                    description = "${unknownDev.vendor.ifBlank { "Unidentified Host" }} (${unknownDev.macAddress}) joined local network. Not found on known-device whitelist.",
+                    deviceIp = unknownDev.ip,
+                    deviceMac = unknownDev.macAddress,
+                    severity = "CRITICAL",
+                    confidencePercent = 99
+                )
+            }
+
+            if (audit.newlyDetectedUnknowns.size > 1) {
+                SecurityNotificationDispatcher.postMultipleUnknownDevicesNotification(
+                    getApplication(),
+                    audit.newlyDetectedUnknowns
+                )
+            }
+
+            triggerIntruderHapticAlert()
+        }
+
+        return audit
+    }
+
+    fun runManualWhitelistComparison() {
+        viewModelScope.launch {
+            _isSubnetScanning.value = true
+            try {
+                val current = _discoveredDevices.value
+                val devices = if (current.isNotEmpty()) current else repository.discoverNetworkDevices(_wifiState.value.ipAddress)
+                processWhitelistComparison(devices, triggerNotifications = true)
+            } finally {
+                _isSubnetScanning.value = false
+            }
+        }
+    }
+
+    fun toggleAutoNotification(enabled: Boolean) {
+        _isAutoNotifyEnabled.value = enabled
+    }
+
+    fun addDeviceToWhitelist(device: DiscoveredDevice) {
+        viewModelScope.launch {
+            repository.addDeviceToWhitelist(device)
+            val updated = _discoveredDevices.value.map {
+                if (it.macAddress.equals(device.macAddress, ignoreCase = true)) {
+                    it.copy(
+                        isAuthorized = true,
+                        isBlocked = false,
+                        isFlaggedUnknown = false,
+                        threatLevel = ThreatLevel.SAFE
+                    )
+                } else it
+            }
+            _discoveredDevices.value = updated
+            processWhitelistComparison(updated, triggerNotifications = false)
+        }
+    }
+
+    fun removeDeviceFromWhitelist(mac: String) {
+        viewModelScope.launch {
+            repository.removeDeviceFromWhitelist(mac)
+            val updated = _discoveredDevices.value.map {
+                if (it.macAddress.equals(mac, ignoreCase = true)) {
+                    it.copy(
+                        isAuthorized = false,
+                        isFlaggedUnknown = true,
+                        threatLevel = ThreatLevel.UNAUTHORIZED_INTRUDER
+                    )
+                } else it
+            }
+            _discoveredDevices.value = updated
+            processWhitelistComparison(updated, triggerNotifications = true)
+        }
+    }
+
+    fun clearAlertedUnknownCache() {
+        alertedUnknownMacs.clear()
     }
 
     fun setDeviceAlias(device: DiscoveredDevice, alias: String) {
@@ -1191,5 +1528,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             // Ignored if permissions disabled
         }
+    }
+
+    fun generateSummaryReport() {
+        viewModelScope.launch {
+            _isGeneratingReport.value = true
+            try {
+                val alerts = repository.getRecentSecurityAlertsList(limit = 25)
+                val isGatewayLocked = _gatewayLockdownActive.value
+                val gwDevice = _discoveredDevices.value.find { it.isGateway }
+                val isGatewayMatch = !isGatewayLocked || (gwDevice == null || gwDevice.macAddress.equals(_lockedGatewayMac.value, ignoreCase = true))
+                val report = NetworkReportGenerator.generateReport(
+                    wifiState = _wifiState.value,
+                    discoveredDevices = _discoveredDevices.value,
+                    whitelistedCount = whitelistedCount.value,
+                    nearbyAps = _nearbyAccessPoints.value,
+                    alerts = alerts,
+                    isGatewayLocked = isGatewayLocked,
+                    isGatewayMatch = isGatewayMatch,
+                    duplicationStatus = _duplicationGuardStatus.value,
+                    isZeroToleranceActive = _isZeroTolerancePolicyActive.value
+                )
+                _networkSummaryReport.value = report
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error generating network summary report", e)
+            } finally {
+                _isGeneratingReport.value = false
+            }
+        }
+    }
+
+    fun exportSummaryReport(context: Context) {
+        val report = _networkSummaryReport.value
+        val text = report.toFormattedReportText()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "Sentinel Network Health & Security Report - ${report.ssid}")
+            putExtra(Intent.EXTRA_TEXT, text)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, "Share Network Security Report").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
     }
 }

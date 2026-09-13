@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.BluetoothSearching
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.CheckCircle
@@ -45,12 +46,16 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Warning
+import com.example.data.model.BackgroundDetectionStatus
 import com.example.data.model.BtDeviceType
 import com.example.data.model.BtPerimeterDevice
 import com.example.data.model.DuplicationGuardStatus
 import com.example.data.model.DuplicationViolationType
 import com.example.data.model.GatewaySwitchType
 import com.example.data.model.GatewayTransitionEvent
+import com.example.data.model.NetworkHardeningRecommendation
+import com.example.util.TimeUtils
+import com.example.util.rememberLiveCurrentTime
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -76,6 +81,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -127,6 +133,16 @@ fun SecurityScreen(
     val duplicationStatus by viewModel.duplicationGuardStatus.collectAsState()
     val isZeroToleranceDuplicationActive by viewModel.isZeroToleranceDuplicationActive.collectAsState()
 
+    val backgroundStatus by viewModel.backgroundDetectionStatus.collectAsState()
+    val hardeningRecommendations by viewModel.networkHardeningRecommendations.collectAsState()
+    val selectedHardeningRecommendation by viewModel.selectedHardeningRecommendation.collectAsState()
+    val whitelistAudit by viewModel.whitelistAuditResult.collectAsState()
+    val whitelistedEntities by viewModel.whitelistedDevices.collectAsState()
+    val isAutoNotifyEnabled by viewModel.isAutoNotifyEnabled.collectAsState()
+    val summaryReport by viewModel.networkSummaryReport.collectAsState()
+    val isGeneratingReport by viewModel.isGeneratingReport.collectAsState()
+    val liveNow by rememberLiveCurrentTime()
+
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, UNAUTHORIZED, FP_SUPPRESSED, AUTHORIZED
     var editingDevice by remember { mutableStateOf<DiscoveredDevice?>(null) }
     var aliasInput by remember { mutableStateOf("") }
@@ -151,6 +167,16 @@ fun SecurityScreen(
         contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        // Live Real-Time Telemetry & Timestamp Clock Banner
+        item {
+            RealtimeTelemetryClockBanner(
+                currentTimeMillis = liveNow,
+                isShieldActive = isShieldActive,
+                isScanning = isScanning,
+                lastScanTimestamp = backgroundStatus.lastScanTimestamp
+            )
+        }
+
         // High-Priority Active Gateway Transition Alert Banner
         activeGatewayAlert?.let { alert ->
             item {
@@ -159,6 +185,33 @@ fun SecurityScreen(
                     onDismiss = { viewModel.dismissActiveGatewayAlert() }
                 )
             }
+        }
+
+        // Network Health and Security Incident Summary Report (Scrollable Card Format)
+        item {
+            val context = LocalContext.current
+            NetworkSummaryReportCard(
+                report = summaryReport,
+                isGenerating = isGeneratingReport,
+                onRefreshReport = { viewModel.generateSummaryReport() },
+                onExportReport = { viewModel.exportSummaryReport(context) }
+            )
+        }
+
+        // Known-Device Whitelist Verification & Real-Time Intrusion Alert Sentry Card
+        item {
+            KnownDeviceWhitelistCard(
+                auditResult = whitelistAudit,
+                whitelistedEntities = whitelistedEntities,
+                isAutoNotifyEnabled = isAutoNotifyEnabled,
+                liveNow = liveNow,
+                onRunAudit = { viewModel.runManualWhitelistComparison() },
+                onToggleAutoNotify = { viewModel.toggleAutoNotification(it) },
+                onSimulateUnknownIntruder = { viewModel.simulateUnknownDeviceIntrusion() },
+                onWhitelistDevice = { viewModel.addDeviceToWhitelist(it) },
+                onRemoveFromWhitelist = { viewModel.removeDeviceFromWhitelist(it) },
+                onBlockDevice = { viewModel.quarantineDevice(it) }
+            )
         }
 
         // Zero-Tolerance & False-Positive Sentry Card (CyberSec Hero)
@@ -171,6 +224,8 @@ fun SecurityScreen(
                 suppressedFpCount = falsePositivesSuppressedCount,
                 packetsDropped = totalPacketsDropped,
                 bytesBlocked = totalBytesBlocked,
+                liveNow = liveNow,
+                lastScanTimestamp = backgroundStatus.lastScanTimestamp,
                 onToggleZeroTolerance = { viewModel.toggleZeroTolerancePolicy(it) },
                 onToggleZeroFp = { viewModel.toggleZeroFpEngine(it) },
                 onSimulateBreach = { viewModel.simulateIntruderBreach() },
@@ -184,11 +239,25 @@ fun SecurityScreen(
             ZeroToleranceDuplicationGuardCard(
                 status = duplicationStatus,
                 isEnforced = isZeroToleranceDuplicationActive,
+                liveNow = liveNow,
                 onToggleEnforced = { viewModel.setZeroToleranceDuplicationActive(it) },
                 onSimulateRogueGateway = { viewModel.simulateDuplicationBreach(DuplicationViolationType.ROGUE_GATEWAY) },
                 onSimulateDuplicateIp = { viewModel.simulateDuplicationBreach(DuplicationViolationType.DUPLICATE_IP) },
                 onSimulateDuplicateMac = { viewModel.simulateDuplicationBreach(DuplicationViolationType.DUPLICATE_MAC) },
                 onSimulateAlienSubnet = { viewModel.simulateDuplicationBreach(DuplicationViolationType.ALIEN_SUBNET) }
+            )
+        }
+
+        // Background Unknown Device Detection & Gemini AI Hardening Card
+        item {
+            BackgroundDetectionHardeningCard(
+                status = backgroundStatus,
+                recommendations = hardeningRecommendations,
+                liveNow = liveNow,
+                onToggleBackgroundDetection = { viewModel.toggleBackgroundDetection(it) },
+                onTriggerAudit = { viewModel.triggerManualHardeningAudit() },
+                onSimulateUnknownDevice = { viewModel.simulateUnknownDeviceIntrusion() },
+                onSelectRecommendation = { viewModel.selectHardeningRecommendation(it) }
             )
         }
 
@@ -215,6 +284,7 @@ fun SecurityScreen(
             ZeroToleranceBtSentryCard(
                 btDevices = btDevices,
                 isShieldActive = isBtShieldActive,
+                liveNow = liveNow,
                 onToggleShield = { viewModel.toggleBtZeroToleranceShield(it) },
                 onSimulateTracker = {
                     viewModel.simulateRogueBtDevice("Apple AirTag (Beacon in Range)", BtDeviceType.TRACKER)
@@ -351,18 +421,34 @@ fun SecurityScreen(
             }
         } else {
             items(filteredDevices, key = { it.macAddress }) { device ->
+                val matchingRec = hardeningRecommendations.find { 
+                    it.targetDeviceIp == device.ip || it.targetDeviceMac.equals(device.macAddress, ignoreCase = true) 
+                }
                 DeviceCard(
                     device = device,
+                    liveNow = liveNow,
                     onToggleAuth = { viewModel.toggleDeviceAuthorization(device) },
                     onQuarantine = { viewModel.quarantineDevice(device) },
                     onDismissFalsePositive = { viewModel.dismissDeviceAsFalsePositive(device) },
                     onEditAlias = {
                         editingDevice = device
                         aliasInput = device.customName
-                    }
+                    },
+                    onViewHardening = if (matchingRec != null) {
+                        { viewModel.selectHardeningRecommendation(matchingRec) }
+                    } else null
                 )
             }
         }
+    }
+
+    // Gemini Network Hardening Recommendation Full Directive Dialog
+    selectedHardeningRecommendation?.let { rec ->
+        HardeningRecommendationDialog(
+            recommendation = rec,
+            liveNow = liveNow,
+            onDismiss = { viewModel.selectHardeningRecommendation(null) }
+        )
     }
 
     // Edit Device Friendly Name Dialog
@@ -515,11 +601,19 @@ fun SecurityScreen(
                                         fontSize = 11.sp
                                     )
 
-                                    if (!alert.isFalsePositive && alert.deviceMac.isNotBlank()) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.End
-                                        ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Logged: ${TimeUtils.formatRealtimeBadge(alert.timestamp, liveNow)}",
+                                            color = TextMuted,
+                                            fontSize = 9.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+
+                                        if (!alert.isFalsePositive && alert.deviceMac.isNotBlank()) {
                                             OutlinedButton(
                                                 onClick = {
                                                     viewModel.markAlertAsFalsePositive(alert.id, alert.deviceMac)
@@ -554,8 +648,77 @@ fun SecurityScreen(
     if (showGatewayTransitionsDialog) {
         GatewayTransitionsDialog(
             transitions = gatewayTransitions,
+            liveNow = liveNow,
             onDismiss = { showGatewayTransitionsDialog = false }
         )
+    }
+}
+
+@Composable
+private fun RealtimeTelemetryClockBanner(
+    currentTimeMillis: Long,
+    isShieldActive: Boolean,
+    isScanning: Boolean,
+    lastScanTimestamp: Long
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF071219))
+            .border(1.dp, CyberCyan.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 9.dp)
+            .testTag("realtime_telemetry_clock_banner")
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isShieldActive) CyberGreen else CyberAmber)
+                )
+                Text(
+                    text = "REAL-TIME SENTINEL TELEMETRY",
+                    color = CyberCyan,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontFamily = FontFamily.Monospace,
+                    letterSpacing = 0.8.sp
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = TimeUtils.formatTime(currentTimeMillis),
+                    color = TextPrimary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = when {
+                        isScanning -> "• SWEEPING"
+                        lastScanTimestamp > 0 -> "• ${TimeUtils.formatRelativeTime(lastScanTimestamp, currentTimeMillis)}"
+                        else -> "• LIVE"
+                    },
+                    color = if (isScanning) CyberCyan else CyberTeal,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
     }
 }
 
@@ -763,10 +926,12 @@ private fun RadarScanBar(
 @Composable
 private fun DeviceCard(
     device: DiscoveredDevice,
+    liveNow: Long = System.currentTimeMillis(),
     onToggleAuth: () -> Unit,
     onQuarantine: () -> Unit,
     onDismissFalsePositive: () -> Unit,
-    onEditAlias: () -> Unit
+    onEditAlias: () -> Unit,
+    onViewHardening: (() -> Unit)? = null
 ) {
     val isThreat = !device.isAuthorized && !device.isSelf && !device.isGateway && !device.isFalsePositiveSuppressed
     val borderColor = when {
@@ -982,6 +1147,55 @@ private fun DeviceCard(
                 )
             }
 
+            // Real-Time Timestamps & Activity Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(CyberSurfaceElevated.copy(alpha = 0.7f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        tint = TextMuted,
+                        modifier = Modifier.size(11.dp)
+                    )
+                    Text(
+                        text = "First: ${TimeUtils.formatRealtimeBadge(device.firstDetected, liveNow)}",
+                        color = TextMuted,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val isRecent = (liveNow - device.lastSeen) < 30000L
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (isRecent) CyberGreen else TextMuted)
+                    )
+                    Text(
+                        text = "Seen: ${TimeUtils.formatRealtimeBadge(device.lastSeen, liveNow)}",
+                        color = if (isRecent) CyberTeal else TextMuted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
             // Prominent Zero Network Access Banner for Blocked Devices
             if (device.isBlocked || !device.hasNetworkAccess) {
                 Box(
@@ -1053,6 +1267,75 @@ private fun DeviceCard(
                                 color = TextSecondary,
                                 fontSize = 8.5.sp
                             )
+                        }
+                    }
+                }
+            }
+
+            // Gemini Zero-Trust Hardening Directive Banner
+            if (device.isFlaggedUnknown || !device.aiHardeningNote.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CyberCyan.copy(alpha = 0.08f))
+                        .border(1.dp, CyberCyan.copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = CyberCyan,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "GEMINI ZERO-TRUST HARDENING DIRECTIVE",
+                                color = CyberCyan,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+
+                        if (!device.aiHardeningNote.isNullOrBlank()) {
+                            Text(
+                                text = device.aiHardeningNote,
+                                color = TextPrimary,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp
+                            )
+                        }
+
+                        if (onViewHardening != null) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(CyberCyan.copy(alpha = 0.18f))
+                                    .clickable { onViewHardening() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = CyberCyan,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = "VIEW FULL HARDENING PROTOCOL",
+                                    color = CyberCyan,
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
                         }
                     }
                 }
@@ -1161,6 +1444,8 @@ private fun ZeroToleranceIntruderAndFpCard(
     suppressedFpCount: Int,
     packetsDropped: Long = 0L,
     bytesBlocked: Long = 0L,
+    liveNow: Long = System.currentTimeMillis(),
+    lastScanTimestamp: Long = 0L,
     onToggleZeroTolerance: (Boolean) -> Unit,
     onToggleZeroFp: (Boolean) -> Unit,
     onSimulateBreach: () -> Unit,
@@ -1217,6 +1502,26 @@ private fun ZeroToleranceIntruderAndFpCard(
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Telemetry: ${TimeUtils.formatTime(liveNow)}",
+                                color = CyberCyan,
+                                fontSize = 9.5.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (lastScanTimestamp > 0) {
+                                Text(
+                                    text = "• Sweep: ${TimeUtils.formatRelativeTime(lastScanTimestamp, liveNow)}",
+                                    color = TextMuted,
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -1840,6 +2145,7 @@ private fun GatewaySwitchGuardCard(
 private fun ZeroToleranceBtSentryCard(
     btDevices: List<BtPerimeterDevice>,
     isShieldActive: Boolean,
+    liveNow: Long = System.currentTimeMillis(),
     onToggleShield: (Boolean) -> Unit,
     onSimulateTracker: () -> Unit,
     onSimulateSniffer: () -> Unit,
@@ -1917,6 +2223,13 @@ private fun ZeroToleranceBtSentryCard(
                             text = "Perimeter RF denial: Zero tolerance for rogue Bluetooth trackers & sniffers",
                             color = TextSecondary,
                             fontSize = 11.sp
+                        )
+                        Text(
+                            text = "Live RF Monitor: ${TimeUtils.formatTime(liveNow)}",
+                            color = CyberCyan,
+                            fontSize = 9.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
@@ -2027,6 +2340,7 @@ private fun ZeroToleranceBtSentryCard(
                     btDevices.forEach { dev ->
                         BtDeviceItemRow(
                             device = dev,
+                            liveNow = liveNow,
                             onToggleQuarantine = { onToggleQuarantine(dev.address) },
                             onToggleTrust = { onToggleTrust(dev.address) },
                             onDismissFalsePositive = { onDismissBtFalsePositive(dev.address) }
@@ -2041,6 +2355,7 @@ private fun ZeroToleranceBtSentryCard(
 @Composable
 private fun BtDeviceItemRow(
     device: BtPerimeterDevice,
+    liveNow: Long = System.currentTimeMillis(),
     onToggleQuarantine: () -> Unit,
     onToggleTrust: () -> Unit,
     onDismissFalsePositive: () -> Unit
@@ -2168,6 +2483,31 @@ private fun BtDeviceItemRow(
                 }
             }
 
+            // Real-Time Activity Timestamps
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(CyberSurface.copy(alpha = 0.6f))
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "First: ${TimeUtils.formatRealtimeBadge(device.firstDetected, liveNow)}",
+                    color = TextMuted,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Text(
+                    text = "Seen: ${TimeUtils.formatRealtimeBadge(device.lastSeen, liveNow)}",
+                    color = CyberTeal,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -2232,6 +2572,7 @@ private fun BtDeviceItemRow(
 @Composable
 private fun GatewayTransitionsDialog(
     transitions: List<GatewayTransitionEvent>,
+    liveNow: Long = System.currentTimeMillis(),
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -2329,6 +2670,12 @@ private fun GatewayTransitionsDialog(
                                     fontSize = 9.sp,
                                     fontFamily = FontFamily.Monospace
                                 )
+                                Text(
+                                    text = "Transitioned: ${TimeUtils.formatRealtimeBadge(event.timestamp, liveNow)}",
+                                    color = CyberCyan,
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
                             }
                         }
                     }
@@ -2350,6 +2697,7 @@ private fun GatewayTransitionsDialog(
 private fun ZeroToleranceDuplicationGuardCard(
     status: DuplicationGuardStatus,
     isEnforced: Boolean,
+    liveNow: Long = System.currentTimeMillis(),
     onToggleEnforced: (Boolean) -> Unit,
     onSimulateRogueGateway: () -> Unit,
     onSimulateDuplicateIp: () -> Unit,
@@ -2453,6 +2801,12 @@ private fun ZeroToleranceDuplicationGuardCard(
                                 text = status.lastViolationEvent.conflictingDetail,
                                 color = TextSecondary,
                                 fontSize = 9.sp
+                            )
+                            Text(
+                                text = "Intercepted: ${TimeUtils.formatRealtimeBadge(status.lastViolationEvent.timestamp, liveNow)}",
+                                color = CyberAmber,
+                                fontSize = 8.5.sp,
+                                fontFamily = FontFamily.Monospace
                             )
                         }
                     }
@@ -2623,5 +2977,586 @@ private fun DuplicationMetricItem(
             )
         }
     }
+}
+
+@Composable
+private fun BackgroundDetectionHardeningCard(
+    status: BackgroundDetectionStatus,
+    recommendations: List<NetworkHardeningRecommendation>,
+    liveNow: Long = System.currentTimeMillis(),
+    onToggleBackgroundDetection: (Boolean) -> Unit,
+    onTriggerAudit: () -> Unit,
+    onSimulateUnknownDevice: () -> Unit,
+    onSelectRecommendation: (NetworkHardeningRecommendation) -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(CyberSurface)
+            .border(
+                1.dp,
+                if (status.unknownDevicesDetected > 0) CyberAmber.copy(alpha = 0.8f) else CyberCyan.copy(alpha = 0.4f),
+                RoundedCornerShape(16.dp)
+            )
+            .padding(14.dp)
+            .testTag("background_detection_hardening_card")
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(CyberCyan.copy(alpha = 0.2f))
+                            .border(1.dp, CyberCyan, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = CyberCyan,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = "UNKNOWN DEVICE DETECTION & GEMINI HARDENING",
+                            color = TextPrimary,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = "Background Sentry & Automated Zero-Trust Directives",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = status.isRunning,
+                    onCheckedChange = onToggleBackgroundDetection,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = CyberCyan,
+                        checkedTrackColor = CyberCyan.copy(alpha = 0.3f),
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = CyberSurfaceElevated
+                    ),
+                    modifier = Modifier.testTag("toggle_background_detection")
+                )
+            }
+
+            // AI Analyzing State or Ready Status
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        if (status.isAiAnalyzing) CyberCyan.copy(alpha = 0.12f)
+                        else if (status.unknownDevicesDetected > 0) CyberAmber.copy(alpha = 0.12f)
+                        else CyberTeal.copy(alpha = 0.08f)
+                    )
+                    .border(
+                        1.dp,
+                        if (status.isAiAnalyzing) CyberCyan.copy(alpha = 0.5f)
+                        else if (status.unknownDevicesDetected > 0) CyberAmber.copy(alpha = 0.5f)
+                        else CyberTeal.copy(alpha = 0.3f),
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (status.isAiAnalyzing) {
+                        CircularProgressIndicator(
+                            color = CyberCyan,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Gemini 2.5 Flash synthesizing network hardening directives...",
+                            color = CyberCyan,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    } else if (status.unknownDevicesDetected > 0) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = CyberAmber,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "${status.unknownDevicesDetected} UNKNOWN HOSTS ACTIVE • HARDENING DIRECTIVES READY",
+                            color = CyberAmber,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = CyberTeal,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Text(
+                            text = "Background Sentry Active (every ${status.scanIntervalSeconds}s) • Zero-Trust Hardening Armed",
+                            color = CyberTeal,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+
+            // Metrics Grid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                DuplicationMetricItem(
+                    modifier = Modifier.weight(1f),
+                    label = "UNKNOWN HOSTS",
+                    value = "${status.unknownDevicesDetected}",
+                    sub = "Flagged Threats",
+                    isAlert = status.unknownDevicesDetected > 0
+                )
+                DuplicationMetricItem(
+                    modifier = Modifier.weight(1f),
+                    label = "AI DIRECTIVES",
+                    value = "${status.activeHardeningDirectives}",
+                    sub = "Synthesized",
+                    isAlert = false
+                )
+                DuplicationMetricItem(
+                    modifier = Modifier.weight(1f),
+                    label = "SCAN INTERVAL",
+                    value = "${status.scanIntervalSeconds}s",
+                    sub = "IO Coroutines",
+                    isAlert = false
+                )
+                DuplicationMetricItem(
+                    modifier = Modifier.weight(1f),
+                    label = "AI ENGINE",
+                    value = "Gemini 2.5",
+                    sub = "Flash Model",
+                    isAlert = false
+                )
+            }
+
+            // Real-Time Subnet Sweep Telemetry Row
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(CyberSurfaceElevated)
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "SURVEILLANCE SWEEP",
+                    color = TextMuted,
+                    fontSize = 8.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Last: ${TimeUtils.formatRealtimeBadge(status.lastScanTimestamp, liveNow)}",
+                    color = CyberCyan,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            // Action Buttons
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onTriggerAudit,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = CyberCyan),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("trigger_hardening_audit_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Run Gemini Audit",
+                        color = Color.Black,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+
+                OutlinedButton(
+                    onClick = onSimulateUnknownDevice,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberAmber),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("simulate_unknown_device_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = CyberAmber,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Simulate Intrusion",
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Active AI Hardening Recommendations List
+            if (recommendations.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "ACTIVE HARDENING DIRECTIVES (${recommendations.size})",
+                        color = TextMuted,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+
+                    recommendations.take(3).forEach { rec ->
+                        HardeningDirectiveSnippetCard(
+                            recommendation = rec,
+                            liveNow = liveNow,
+                            onClick = { onSelectRecommendation(rec) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HardeningDirectiveSnippetCard(
+    recommendation: NetworkHardeningRecommendation,
+    liveNow: Long = System.currentTimeMillis(),
+    onClick: () -> Unit
+) {
+    val riskColor = when (recommendation.riskLevel.uppercase()) {
+        "CRITICAL" -> CyberRed
+        "HIGH" -> CyberAmber
+        else -> CyberCyan
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(CyberSurfaceElevated)
+            .border(1.dp, riskColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(10.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(riskColor.copy(alpha = 0.2f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = recommendation.riskLevel.uppercase(),
+                            color = riskColor,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Text(
+                        text = "${recommendation.targetDeviceIp} • ${recommendation.vendor}",
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Inspect",
+                        color = CyberCyan,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = CyberCyan,
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = recommendation.threatAssessment,
+                color = TextSecondary,
+                fontSize = 9.5.sp,
+                maxLines = 2,
+                lineHeight = 13.sp
+            )
+
+            if (recommendation.firewallRules.isNotEmpty()) {
+                Text(
+                    text = "Rule: ${recommendation.firewallRules.first()}",
+                    color = CyberCyan,
+                    fontSize = 8.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1
+                )
+            }
+
+            Text(
+                text = "Synthesized: ${TimeUtils.formatRealtimeBadge(recommendation.timestamp, liveNow)}",
+                color = TextMuted,
+                fontSize = 8.5.sp,
+                fontFamily = FontFamily.Monospace
+            )
+        }
+    }
+}
+
+@Composable
+private fun HardeningRecommendationDialog(
+    recommendation: NetworkHardeningRecommendation,
+    liveNow: Long = System.currentTimeMillis(),
+    onDismiss: () -> Unit
+) {
+    val riskColor = when (recommendation.riskLevel.uppercase()) {
+        "CRITICAL" -> CyberRed
+        "HIGH" -> CyberAmber
+        else -> CyberCyan
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = CyberSurface,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    tint = CyberCyan,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column {
+                    Text(
+                        text = "Gemini Hardening Directive",
+                        color = TextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${recommendation.targetDeviceIp} (${recommendation.targetDeviceMac})",
+                        color = CyberCyan,
+                        fontSize = 10.5.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = "Synthesized: ${TimeUtils.formatRealtimeBadge(recommendation.timestamp, liveNow)}",
+                        color = TextMuted,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Risk Level & Threat Assessment
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(riskColor.copy(alpha = 0.12f))
+                        .border(1.dp, riskColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .padding(10.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "THREAT ASSESSMENT [${recommendation.riskLevel.uppercase()}]",
+                                color = riskColor,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        Text(
+                            text = recommendation.threatAssessment,
+                            color = TextPrimary,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                    }
+                }
+
+                // Firewall Directives
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "KERNEL / ROUTER FIREWALL DIRECTIVES",
+                        color = CyberCyan,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF090D12))
+                            .border(1.dp, CyberBorder, RoundedCornerShape(6.dp))
+                            .padding(8.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            for (rule in recommendation.firewallRules) {
+                                Text(
+                                    text = "$ $rule",
+                                    color = CyberGreen,
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Router Hardening Steps
+                if (recommendation.routerHardeningSteps.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "RECOMMENDED ROUTER SETTINGS",
+                            color = CyberAmber,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        for (step in recommendation.routerHardeningSteps) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text(text = "•", color = CyberAmber, fontSize = 11.sp)
+                                Text(
+                                    text = step,
+                                    color = TextSecondary,
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Network Isolation & Zero-Trust Action
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(CyberSurfaceElevated)
+                        .border(1.dp, CyberBorder, RoundedCornerShape(6.dp))
+                        .padding(8.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "IMMEDIATE ZERO-TRUST CONTAINMENT",
+                            color = TextMuted,
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = recommendation.zeroTrustAction,
+                            color = CyberRed,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Isolation Target: ${recommendation.vlanOrIsolationAction}",
+                            color = CyberTeal,
+                            fontSize = 9.5.sp
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = CyberCyan),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Text(
+                    text = "Acknowledge & Dismiss",
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp
+                )
+            }
+        }
+    )
 }
 

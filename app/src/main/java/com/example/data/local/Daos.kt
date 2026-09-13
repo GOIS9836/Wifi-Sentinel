@@ -30,6 +30,15 @@ interface NetworkDeviceDao {
     @Query("UPDATE known_devices SET customName = :name WHERE macAddress = :mac")
     suspend fun setCustomName(mac: String, name: String)
 
+    @Query("SELECT * FROM known_devices WHERE isAuthorized = 1 ORDER BY lastSeen DESC")
+    fun getWhitelistedDevices(): Flow<List<NetworkDeviceEntity>>
+
+    @Query("SELECT * FROM known_devices WHERE isAuthorized = 1")
+    suspend fun getWhitelistedDevicesList(): List<NetworkDeviceEntity>
+
+    @Query("SELECT COUNT(*) FROM known_devices WHERE isAuthorized = 1")
+    fun getWhitelistedCount(): Flow<Int>
+
     @Query("DELETE FROM known_devices WHERE macAddress = :mac")
     suspend fun deleteDevice(mac: String)
 }
@@ -53,6 +62,9 @@ interface SignalLogDao {
 interface SecurityAlertDao {
     @Query("SELECT * FROM security_alerts ORDER BY timestamp DESC")
     fun getAllAlerts(): Flow<List<SecurityAlertEntity>>
+
+    @Query("SELECT * FROM security_alerts ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentAlertsList(limit: Int = 20): List<SecurityAlertEntity>
 
     @Query("SELECT COUNT(*) FROM security_alerts WHERE isAcknowledged = 0")
     fun getUnacknowledgedCount(): Flow<Int>

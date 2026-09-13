@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,6 +73,8 @@ import com.example.ui.theme.CyberTeal
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.util.TimeUtils
+import com.example.util.rememberLiveCurrentTime
 
 @Composable
 fun AiAdvisorScreen(
@@ -82,6 +85,7 @@ fun AiAdvisorScreen(
     val isOptimizing by viewModel.isAiOptimizing.collectAsState()
     val chatMessages by viewModel.chatMessages.collectAsState()
     val isGenerating by viewModel.isChatGenerating.collectAsState()
+    val liveNow by rememberLiveCurrentTime()
 
     var userQuery by remember { mutableStateOf("") }
     val completedActions = remember { mutableStateListOf<String>() }
@@ -98,6 +102,8 @@ fun AiAdvisorScreen(
             AiOptimizationHeroBanner(
                 isOptimizing = isOptimizing,
                 hasReport = aiReport != null,
+                reportTimestamp = aiReport?.timestamp,
+                liveNow = liveNow,
                 onRunOptimization = { viewModel.runAiOptimization() }
             )
         }
@@ -163,7 +169,7 @@ fun AiAdvisorScreen(
 
         // Interactive AI Wi-Fi Consultant Chat
         item {
-            ChatSectionHeader()
+            ChatSectionHeader(liveNow = liveNow)
         }
 
         // Quick Prompt Suggestions
@@ -179,7 +185,10 @@ fun AiAdvisorScreen(
 
         // Chat conversation bubbles
         items(chatMessages, key = { it.id }) { msg ->
-            ChatBubble(message = msg)
+            ChatBubble(
+                message = msg,
+                liveNow = liveNow
+            )
         }
 
         if (isGenerating) {
@@ -234,6 +243,8 @@ fun AiAdvisorScreen(
 private fun AiOptimizationHeroBanner(
     isOptimizing: Boolean,
     hasReport: Boolean,
+    reportTimestamp: Long? = null,
+    liveNow: Long = System.currentTimeMillis(),
     onRunOptimization: () -> Unit
 ) {
     Box(
@@ -245,7 +256,7 @@ private fun AiOptimizationHeroBanner(
             .padding(18.dp)
             .testTag("ai_optimization_hero")
     ) {
-        Column {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -283,7 +294,32 @@ private fun AiOptimizationHeroBanner(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (reportTimestamp != null && hasReport) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CyberSurfaceElevated)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "LATEST SYNTHESIS",
+                        color = TextMuted,
+                        fontSize = 8.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = TimeUtils.formatRealtimeBadge(reportTimestamp, liveNow),
+                        color = CyberCyan,
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
 
             Button(
                 onClick = onRunOptimization,
@@ -498,24 +534,37 @@ private fun ActionChecklistCard(
 }
 
 @Composable
-private fun ChatSectionHeader() {
+private fun ChatSectionHeader(
+    liveNow: Long = System.currentTimeMillis()
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = Icons.Default.Psychology,
-            contentDescription = null,
-            tint = CyberCyan,
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Default.Psychology,
+                contentDescription = null,
+                tint = CyberCyan,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Interactive Wi-Fi Consultant",
+                color = TextPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
         Text(
-            text = "Interactive Wi-Fi Consultant",
-            color = TextPrimary,
-            fontSize = 16.sp,
+            text = "Live: ${TimeUtils.formatTime(liveNow)}",
+            color = CyberCyan,
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold
         )
     }
@@ -554,7 +603,10 @@ private fun QuickPromptsRow(onPromptSelect: (String) -> Unit) {
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage) {
+private fun ChatBubble(
+    message: ChatMessage,
+    liveNow: Long = System.currentTimeMillis()
+) {
     val isUser = message.isUser
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -585,12 +637,24 @@ private fun ChatBubble(message: ChatMessage) {
                 .padding(14.dp)
         ) {
             Column {
-                Text(
-                    text = if (isUser) "You" else "WiFi Sentinel AI",
-                    color = if (isUser) CyberCyan else CyberTeal,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isUser) "You" else "WiFi Sentinel AI",
+                        color = if (isUser) CyberCyan else CyberTeal,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = TimeUtils.formatRealtimeBadge(message.timestamp, liveNow),
+                        color = if (isUser) CyberCyan.copy(alpha = 0.75f) else TextMuted,
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = message.text,

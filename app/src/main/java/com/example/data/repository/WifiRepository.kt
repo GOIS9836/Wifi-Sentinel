@@ -10,6 +10,7 @@ import com.example.data.model.BtPerimeterDevice
 import com.example.data.model.DiscoveredDevice
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
+import com.example.data.model.NetworkHardeningRecommendation
 import com.example.data.model.ThreatLevel
 import com.example.data.model.WifiConnectionState
 import com.example.data.remote.GeminiService
@@ -28,6 +29,8 @@ class WifiRepository(
     private val networkAccessEnforcer: NetworkAccessEnforcer? = null
 ) {
     val knownDevicesFlow: Flow<List<NetworkDeviceEntity>> = database.networkDeviceDao().getAllDevices()
+    val whitelistedDevicesFlow: Flow<List<NetworkDeviceEntity>> = database.networkDeviceDao().getWhitelistedDevices()
+    val whitelistedCountFlow: Flow<Int> = database.networkDeviceDao().getWhitelistedCount()
     val signalLogsFlow: Flow<List<SignalLogEntity>> = database.signalLogDao().getAllSignalLogs()
     val securityAlertsFlow: Flow<List<SecurityAlertEntity>> = database.securityAlertDao().getAllAlerts()
     val unacknowledgedAlertsCount: Flow<Int> = database.securityAlertDao().getUnacknowledgedCount()
@@ -171,6 +174,49 @@ class WifiRepository(
         database.networkDeviceDao().setAuthorized(mac, true)
     }
 
+    suspend fun addDeviceToWhitelist(device: DiscoveredDevice) {
+        val existing = database.networkDeviceDao().getDeviceByMac(device.macAddress)
+        val entity = existing?.copy(isAuthorized = true, isBlocked = false)
+            ?: NetworkDeviceEntity(
+                macAddress = device.macAddress,
+                ipAddress = device.ip,
+                vendor = device.vendor,
+                customName = device.customName,
+                isAuthorized = true,
+                isBlocked = false
+            )
+        database.networkDeviceDao().insertOrUpdate(entity)
+        networkAccessEnforcer?.unblockDeviceNetworkAccess(device.macAddress)
+    }
+
+    suspend fun removeDeviceFromWhitelist(mac: String) {
+        database.networkDeviceDao().setAuthorized(mac, false)
+    }
+
+    suspend fun getWhitelistedDevicesList(): List<NetworkDeviceEntity> {
+        return database.networkDeviceDao().getWhitelistedDevicesList()
+    }
+
+    suspend fun recordSecurityAlert(
+        title: String,
+        description: String,
+        deviceIp: String,
+        deviceMac: String,
+        severity: String = "CRITICAL",
+        confidencePercent: Int = 99
+    ) {
+        database.securityAlertDao().insert(
+            SecurityAlertEntity(
+                title = title,
+                description = description,
+                deviceIp = deviceIp,
+                deviceMac = deviceMac,
+                severity = severity,
+                confidencePercent = confidencePercent
+            )
+        )
+    }
+
     fun toggleBtTrust(address: String) {
         btSentryScanner.toggleTrustDevice(address)
     }
@@ -235,6 +281,13 @@ class WifiRepository(
         return geminiService.askAdvisor(prompt, state, devices)
     }
 
+    suspend fun generateNetworkHardeningRecommendations(
+        unknownDevices: List<DiscoveredDevice>,
+        state: WifiConnectionState
+    ): List<NetworkHardeningRecommendation> {
+        return geminiService.generateNetworkHardeningRecommendations(unknownDevices, state)
+    }
+
     fun startBtPerimeterScan(onThreat: (BtPerimeterDevice) -> Unit) {
         btSentryScanner.startPerimeterScan(onThreat)
     }
@@ -286,5 +339,9 @@ class WifiRepository(
                 confidencePercent = 100
             )
         )
+    }
+
+    suspend fun getRecentSecurityAlertsList(limit: Int = 20): List<SecurityAlertEntity> {
+        return database.securityAlertDao().getRecentAlertsList(limit)
     }
 }

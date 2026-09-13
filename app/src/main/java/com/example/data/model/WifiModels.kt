@@ -38,6 +38,7 @@ data class DiscoveredDevice(
     val macAddress: String,
     val vendor: String = "Unknown Vendor",
     val customName: String = "",
+    val hostname: String = "",
     val isAuthorized: Boolean = false,
     val isSelf: Boolean = false,
     val isGateway: Boolean = false,
@@ -57,7 +58,8 @@ data class DiscoveredDevice(
     val isSubnetAnomaly: Boolean = false,
     val duplicationAlertDetail: String? = null,
     val isFlaggedUnknown: Boolean = false,
-    val aiHardeningNote: String? = null
+    val aiHardeningNote: String? = null,
+    val openPorts: List<Int> = emptyList()
 ) {
     val displayName: String
         get() = when {
@@ -224,4 +226,143 @@ data class DuplicationGuardStatus(
     val totalViolations: Int
         get() = duplicateGatewaysBlocked + duplicateIpsBlocked + duplicateMacsDeduplicated + subnetAnomaliesBlocked
 }
+
+data class NetworkHardeningRecommendation(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val targetDeviceIp: String,
+    val targetDeviceMac: String,
+    val vendor: String,
+    val riskLevel: String = "CRITICAL", // CRITICAL, HIGH, MEDIUM, LOW
+    val threatAssessment: String,
+    val firewallRules: List<String> = emptyList(),
+    val routerHardeningSteps: List<String> = emptyList(),
+    val vlanOrIsolationAction: String = "",
+    val zeroTrustAction: String = "",
+    val timestamp: Long = System.currentTimeMillis()
+) {
+    val targetDeviceVendor: String get() = vendor
+    val recommendedFirewallRules: List<String> get() = firewallRules
+    val immediateZeroTrustAction: String get() = zeroTrustAction
+}
+
+data class BackgroundDetectionStatus(
+    val isRunning: Boolean = true,
+    val scanIntervalSeconds: Int = 20,
+    val unknownDevicesDetected: Int = 0,
+    val activeHardeningDirectives: Int = 0,
+    val lastScanTimestamp: Long = System.currentTimeMillis(),
+    val isAiAnalyzing: Boolean = false
+)
+
+enum class WhitelistAuditStatus {
+    ALL_WHITELISTED,
+    UNKNOWN_DETECTED,
+    ALERT_TRIGGERED
+}
+
+data class DeviceWhitelistAuditResult(
+    val totalConnected: Int = 0,
+    val whitelistedCount: Int = 0,
+    val unknownCount: Int = 0,
+    val whitelistedDevices: List<DiscoveredDevice> = emptyList(),
+    val unknownDevices: List<DiscoveredDevice> = emptyList(),
+    val newlyDetectedUnknowns: List<DiscoveredDevice> = emptyList(),
+    val status: WhitelistAuditStatus = WhitelistAuditStatus.ALL_WHITELISTED,
+    val auditTimestamp: Long = System.currentTimeMillis(),
+    val notificationsDispatched: Int = 0,
+    val isAutoNotifyEnabled: Boolean = true
+)
+
+enum class NetworkHealthGrade(val label: String, val rating: String) {
+    EXCELLENT("Excellent", "A+ Optimal"),
+    GOOD("Good", "B Solid"),
+    FAIR("Fair", "C Degraded"),
+    CRITICAL("Critical Risk", "F Compromised")
+}
+
+data class IncidentTally(
+    val totalCount: Int = 0,
+    val criticalCount: Int = 0,
+    val highCount: Int = 0,
+    val mediumCount: Int = 0,
+    val unacknowledgedCount: Int = 0
+)
+
+data class ReportIncidentItem(
+    val id: Long = 0L,
+    val title: String = "",
+    val description: String = "",
+    val severity: String = "CRITICAL",
+    val timestamp: Long = System.currentTimeMillis(),
+    val deviceIp: String = "",
+    val deviceMac: String = ""
+)
+
+data class NetworkSummaryReport(
+    val generatedAt: Long = System.currentTimeMillis(),
+    val overallHealthScore: Int = 95,
+    val healthGrade: NetworkHealthGrade = NetworkHealthGrade.EXCELLENT,
+    val ssid: String = "",
+    val bssid: String = "",
+    val ipAddress: String = "",
+    val gatewayIp: String = "",
+    val isGatewayVerified: Boolean = true,
+    val rssiDbm: Int = -55,
+    val signalPercent: Int = 90,
+    val linkSpeedMbps: Int = 144,
+    val channel: Int = 6,
+    val band: String = "5 GHz",
+    val channelCongestionLevel: String = "Low",
+    val connectedDevicesCount: Int = 0,
+    val whitelistedDevicesCount: Int = 0,
+    val unknownDevicesCount: Int = 0,
+    val blockedDevicesCount: Int = 0,
+    val falsePositivesCount: Int = 0,
+    val incidents: IncidentTally = IncidentTally(),
+    val recentIncidents: List<ReportIncidentItem> = emptyList(),
+    val keyFindings: List<String> = emptyList(),
+    val actionableRecommendations: List<String> = emptyList()
+) {
+    fun toFormattedReportText(): String {
+        return buildString {
+            appendLine("=== SENTINEL NETWORK HEALTH & SECURITY INCIDENT REPORT ===")
+            appendLine("Generated: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(generatedAt))}")
+            appendLine("Overall Health Score: $overallHealthScore/100 (${healthGrade.label} • ${healthGrade.rating})")
+            appendLine()
+            appendLine("[NETWORK HEALTH METRICS]")
+            appendLine("• SSID: $ssid ($bssid)")
+            appendLine("• Device IP: $ipAddress | Gateway: $gatewayIp (Verified: ${if (isGatewayVerified) "YES" else "UNVERIFIED"})")
+            appendLine("• Signal: $rssiDbm dBm ($signalPercent%) | Link Speed: $linkSpeedMbps Mbps")
+            appendLine("• Channel: $channel ($band) | RF Congestion: $channelCongestionLevel")
+            appendLine()
+            appendLine("[SECURITY POSTURE & INCIDENT AUDIT]")
+            appendLine("• Total Hosts Connected: $connectedDevicesCount")
+            appendLine("• Whitelisted / Trusted: $whitelistedDevicesCount")
+            appendLine("• Unknown / Unlisted Hosts: $unknownDevicesCount")
+            appendLine("• Blocked / Quarantined Hosts: $blockedDevicesCount")
+            appendLine("• Total Incidents Logged: ${incidents.totalCount} (${incidents.criticalCount} Critical, ${incidents.unacknowledgedCount} Pending)")
+            appendLine()
+            if (keyFindings.isNotEmpty()) {
+                appendLine("[KEY FINDINGS]")
+                keyFindings.forEach { appendLine("• $it") }
+                appendLine()
+            }
+            if (actionableRecommendations.isNotEmpty()) {
+                appendLine("[ACTIONABLE RECOMMENDATIONS]")
+                actionableRecommendations.forEach { appendLine("• $it") }
+                appendLine()
+            }
+            if (recentIncidents.isNotEmpty()) {
+                appendLine("[RECENT SECURITY INCIDENTS]")
+                recentIncidents.take(5).forEach { inc ->
+                    appendLine("[${inc.severity}] ${inc.title} - ${inc.description} (${inc.deviceIp})")
+                }
+                appendLine()
+            }
+            appendLine("==========================================================")
+        }
+    }
+}
+
+
 
