@@ -27,29 +27,59 @@ import com.example.data.model.DuplicationViolationType
 import com.example.data.model.GatewaySwitchType
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
+import com.example.data.model.AntivirusScannerState
+import com.example.data.model.AppRiskLevel
+import com.example.data.model.AppSecurityScanResult
+import com.example.data.model.DailyScanScheduleSettings
+import com.example.data.model.DeviceStorageMemoryMetrics
+import com.example.data.model.GatewayFilterCategory
+import com.example.data.model.GatewayRouterNode
+import com.example.data.model.GatewayRouterType
+import com.example.data.model.JunkCategoryItem
+import com.example.data.model.JunkCleanResult
+import com.example.data.model.JunkType
 import com.example.data.model.NetworkHardeningRecommendation
+import com.example.data.model.NetworkRiskAssessment
 import com.example.data.model.NetworkSummaryReport
+import com.example.data.model.SystemSecurityAudit
 import com.example.data.model.ThreatLevel
+import com.example.data.model.ThreatVectorBreakdown
+import com.example.data.model.UnethicalDevice
+import com.example.data.model.UnethicalThreatType
 import com.example.data.model.WhitelistAuditStatus
 import com.example.data.model.WifiConnectionState
 import com.example.data.model.isLocallyAdministeredMac
 import com.example.data.remote.GeminiService
 import com.example.data.repository.WifiRepository
+import com.example.service.AntivirusScannerEngine
 import com.example.service.BluetoothSentryScanner
+import com.example.service.DailyScanScheduler
 import com.example.service.DeviceWhitelistComparisonEngine
 import com.example.service.FirewallAclRule
+import com.example.service.JunkCleanerEngine
 import com.example.service.NetworkAccessEnforcer
 import com.example.service.NetworkReportGenerator
 import com.example.service.SecurityNotificationDispatcher
 import com.example.service.WiFiManager
 import com.example.service.WifiScannerService
 import com.example.service.ZeroToleranceDuplicationGuard
+import com.example.service.WorkspaceClusterManager
+import com.example.data.model.WorkspaceProfile
+import com.example.data.model.PergamusClusterNode
+import com.example.data.model.ClusterBackupSnapshot
+import com.example.data.model.TrialErrorEntry
+import com.example.data.model.TrialCategory
+import com.example.data.model.RecurringBetaTester
+import com.example.data.model.BetaFlightRunResult
+import android.net.Uri
+import android.provider.Settings
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -221,6 +251,87 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isGeneratingReport = MutableStateFlow(false)
     val isGeneratingReport: StateFlow<Boolean> = _isGeneratingReport.asStateFlow()
 
+    // Antivirus & Malware Scanner States
+    private val _antivirusState = MutableStateFlow(AntivirusScannerState())
+    val antivirusState: StateFlow<AntivirusScannerState> = _antivirusState.asStateFlow()
+
+    private val _scannedApps = MutableStateFlow<List<AppSecurityScanResult>>(emptyList())
+    val scannedApps: StateFlow<List<AppSecurityScanResult>> = _scannedApps.asStateFlow()
+
+    private val _systemSecurityAudit = MutableStateFlow(SystemSecurityAudit())
+    val systemSecurityAudit: StateFlow<SystemSecurityAudit> = _systemSecurityAudit.asStateFlow()
+
+    private val _quarantinedPackageNames = MutableStateFlow<Set<String>>(emptySet())
+    val quarantinedPackageNames: StateFlow<Set<String>> = _quarantinedPackageNames.asStateFlow()
+
+    private val _whitelistedPackageNames = MutableStateFlow<Set<String>>(emptySet())
+    val whitelistedPackageNames: StateFlow<Set<String>> = _whitelistedPackageNames.asStateFlow()
+
+    private var antivirusScanJob: Job? = null
+
+    // System Cache & Junk Cleaner States
+    private val _junkCategories = MutableStateFlow<List<JunkCategoryItem>>(emptyList())
+    val junkCategories: StateFlow<List<JunkCategoryItem>> = _junkCategories.asStateFlow()
+
+    private val _isCalculatingJunk = MutableStateFlow(false)
+    val isCalculatingJunk: StateFlow<Boolean> = _isCalculatingJunk.asStateFlow()
+
+    private val _isCleaningJunk = MutableStateFlow(false)
+    val isCleaningJunk: StateFlow<Boolean> = _isCleaningJunk.asStateFlow()
+
+    private val _lastCleanResult = MutableStateFlow<JunkCleanResult?>(null)
+    val lastCleanResult: StateFlow<JunkCleanResult?> = _lastCleanResult.asStateFlow()
+
+    private val _deviceMetrics = MutableStateFlow(DeviceStorageMemoryMetrics())
+    val deviceMetrics: StateFlow<DeviceStorageMemoryMetrics> = _deviceMetrics.asStateFlow()
+
+    // Scheduled Daily Scan Settings State
+    private val _dailyScanSchedule = MutableStateFlow(DailyScanScheduleSettings())
+    val dailyScanSchedule: StateFlow<DailyScanScheduleSettings> = _dailyScanSchedule.asStateFlow()
+
+    private val _isExecutingScheduledScan = MutableStateFlow(false)
+    val isExecutingScheduledScan: StateFlow<Boolean> = _isExecutingScheduledScan.asStateFlow()
+
+    // --- SECURITY DASHBOARD, RISK METRICS & THREAT CONTROLS ---
+    private val _scanFrequencySeconds = MutableStateFlow(10)
+    val scanFrequencySeconds: StateFlow<Int> = _scanFrequencySeconds.asStateFlow()
+
+    private val _networkRiskAssessment = MutableStateFlow(NetworkRiskAssessment())
+    val networkRiskAssessment: StateFlow<NetworkRiskAssessment> = _networkRiskAssessment.asStateFlow()
+
+    private val _isCalculatingRiskScore = MutableStateFlow(false)
+    val isCalculatingRiskScore: StateFlow<Boolean> = _isCalculatingRiskScore.asStateFlow()
+
+    // Wifi Sentinel AI: Unethicals Scanner
+    private val _unethicalDevices = MutableStateFlow<List<UnethicalDevice>>(emptyList())
+    val unethicalDevices: StateFlow<List<UnethicalDevice>> = _unethicalDevices.asStateFlow()
+
+    private val _isScanningForUnethicals = MutableStateFlow(false)
+    val isScanningForUnethicals: StateFlow<Boolean> = _isScanningForUnethicals.asStateFlow()
+
+    // Multi-Gateways & Routers Management Filters
+    private val _managedGateways = MutableStateFlow<List<GatewayRouterNode>>(defaultManagedGateways())
+    val managedGateways: StateFlow<List<GatewayRouterNode>> = _managedGateways.asStateFlow()
+
+    private val _selectedGatewayFilter = MutableStateFlow(GatewayFilterCategory.ALL)
+    val selectedGatewayFilter: StateFlow<GatewayFilterCategory> = _selectedGatewayFilter.asStateFlow()
+
+    val filteredGateways: StateFlow<List<GatewayRouterNode>> = combine(
+        _managedGateways,
+        _selectedGatewayFilter
+    ) { gateways, filter ->
+        when (filter) {
+            GatewayFilterCategory.ALL -> gateways
+            GatewayFilterCategory.PRIMARY -> gateways.filter { it.type == GatewayRouterType.PRIMARY_DEFAULT }
+            GatewayFilterCategory.MESH_NODES -> gateways.filter { it.type == GatewayRouterType.MESH_SATELLITE }
+            GatewayFilterCategory.SECONDARY -> gateways.filter { it.type == GatewayRouterType.SECONDARY_GATEWAY }
+            GatewayFilterCategory.VIRTUAL -> gateways.filter { it.type == GatewayRouterType.VIRTUAL_BRIDGE }
+            GatewayFilterCategory.ROGUE_DUPLICATE -> gateways.filter { it.type == GatewayRouterType.ROGUE_DUPLICATE }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    lateinit var totalQuarantinedCount: StateFlow<Int>
+
     private val alertedUnknownMacs = Collections.synchronizedSet(mutableSetOf<String>())
 
     private var telemetryTickerJob: Job? = null
@@ -252,6 +363,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope, SharingStarted.Eagerly, 0
         )
 
+        totalQuarantinedCount = combine(
+            _discoveredDevices,
+            perimeterBtDevices,
+            _quarantinedPackageNames,
+            _unethicalDevices,
+            _managedGateways
+        ) { args: Array<Any> ->
+            @Suppress("UNCHECKED_CAST")
+            val devices = args[0] as List<DiscoveredDevice>
+            @Suppress("UNCHECKED_CAST")
+            val btDevices = args[1] as List<BtPerimeterDevice>
+            @Suppress("UNCHECKED_CAST")
+            val apps = args[2] as Set<String>
+            @Suppress("UNCHECKED_CAST")
+            val unethicals = args[3] as List<UnethicalDevice>
+            @Suppress("UNCHECKED_CAST")
+            val gateways = args[4] as List<GatewayRouterNode>
+
+            devices.count { it.isBlocked } +
+            btDevices.count { it.isQuarantined } +
+            apps.size +
+            unethicals.count { it.isQuarantined } +
+            gateways.count { it.isQuarantined }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
         SecurityNotificationDispatcher.initNotificationChannel(application)
 
         startTelemetryTicker()
@@ -260,6 +396,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         refreshSubnetDevices()
         refreshNearbyAPs()
         generateSummaryReport()
+        refreshSystemAudit()
+        refreshJunkStorage()
+        startAntivirusScan()
+        _dailyScanSchedule.value = DailyScanScheduler.loadSettings(application)
+        refreshNetworkRiskScore()
     }
 
     private fun startTelemetryTicker() {
@@ -277,6 +418,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val updatedState = live.copy(
                     isConnected = directStatus.isConnected || live.isConnected,
                     ssid = if (directStatus.ssid.isNotBlank() && directStatus.ssid != "Disconnected" && directStatus.ssid != "Connected Wi-Fi") directStatus.ssid else live.ssid,
+                    bssid = if (directStatus.bssid.isNotBlank() && directStatus.bssid != "00:00:00:00:00:00") directStatus.bssid else live.bssid,
                     rssi = dynamicRssi,
                     signalPercent = ((dynamicRssi + 100) * 2).coerceIn(0, 100),
                     linkSpeedMbps = if (directStatus.linkSpeedMbps > 0) directStatus.linkSpeedMbps else live.linkSpeedMbps
@@ -299,12 +441,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    val isForegroundScannerRunning = com.example.service.NetworkScannerForegroundService.isServiceRunning
+
     fun toggleRealTimeShield(enabled: Boolean) {
         _isRealTimeShieldActive.value = enabled
         if (enabled) {
             startShieldWatcher()
+            try {
+                com.example.service.NetworkScannerForegroundService.start(getApplication())
+            } catch (e: Exception) {
+                // Non-blocking in test / restricted environments
+            }
         } else {
             shieldWatcherJob?.cancel()
+            try {
+                com.example.service.NetworkScannerForegroundService.stop(getApplication())
+            } catch (e: Exception) {
+                // Non-blocking in test / restricted environments
+            }
+        }
+    }
+
+    fun startForegroundScanner() {
+        try {
+            com.example.service.NetworkScannerForegroundService.start(getApplication())
+        } catch (e: Exception) {
+            // Non-blocking
+        }
+    }
+
+    fun stopForegroundScanner() {
+        try {
+            com.example.service.NetworkScannerForegroundService.stop(getApplication())
+        } catch (e: Exception) {
+            // Non-blocking
+        }
+    }
+
+    fun triggerImmediateForegroundScan() {
+        try {
+            com.example.service.NetworkScannerForegroundService.triggerScan(getApplication())
+        } catch (e: Exception) {
+            // Non-blocking
         }
     }
 
@@ -312,7 +490,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         shieldWatcherJob?.cancel()
         shieldWatcherJob = viewModelScope.launch {
             while (_isRealTimeShieldActive.value) {
-                delay(8000)
+                delay((_scanFrequencySeconds.value * 1000L).coerceAtLeast(3000L))
                 if (!_isSubnetScanning.value) {
                     val previousUnauthorized = _discoveredDevices.value.count {
                         !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed
@@ -678,15 +856,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             audit.newlyDetectedUnknowns.forEach { unknownDev ->
                 alertedUnknownMacs.add(unknownDev.macAddress.uppercase())
 
-                // 1. Dispatch rich Android system notification
-                SecurityNotificationDispatcher.postUnknownDeviceNotification(
-                    getApplication(),
-                    unknownDev
+                // 1. Dispatch rich Android system notification for unauthorized device detected by background scanner
+                SecurityNotificationDispatcher.postUnauthorizedDeviceAlert(
+                    context = getApplication(),
+                    device = unknownDev,
+                    threatReason = "Unauthorized host detected on subnet by background scanner"
                 )
 
                 // 2. Persist in Room security alert feed
                 repository.recordSecurityAlert(
-                    title = "🚨 Unknown Device Detected: ${unknownDev.ip}",
+                    title = "🚨 Unauthorized Device Detected: ${unknownDev.ip}",
                     description = "${unknownDev.vendor.ifBlank { "Unidentified Host" }} (${unknownDev.macAddress}) joined local network. Not found on known-device whitelist.",
                     deviceIp = unknownDev.ip,
                     deviceMac = unknownDev.macAddress,
@@ -696,9 +875,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (audit.newlyDetectedUnknowns.size > 1) {
-                SecurityNotificationDispatcher.postMultipleUnknownDevicesNotification(
-                    getApplication(),
-                    audit.newlyDetectedUnknowns
+                SecurityNotificationDispatcher.postMultipleUnauthorizedDevicesAlert(
+                    context = getApplication(),
+                    unauthorizedDevices = audit.newlyDetectedUnknowns
                 )
             }
 
@@ -723,6 +902,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleAutoNotification(enabled: Boolean) {
         _isAutoNotifyEnabled.value = enabled
+    }
+
+    fun triggerTestUnauthorizedDeviceAlert(
+        sampleIp: String = "192.168.1.189",
+        sampleMac: String = "00:E0:4C:68:01:AF",
+        sampleVendor: String = "Unknown Shenzhen Host"
+    ) {
+        val testDevice = DiscoveredDevice(
+            ip = sampleIp,
+            macAddress = sampleMac,
+            vendor = sampleVendor,
+            isAuthorized = false,
+            openPorts = listOf(22, 80, 8080),
+            threatLevel = ThreatLevel.UNAUTHORIZED_INTRUDER
+        )
+        SecurityNotificationDispatcher.postUnauthorizedDeviceAlert(
+            context = getApplication(),
+            device = testDevice,
+            threatReason = "Zero-Tolerance: Unauthorized host discovered by background scanner"
+        )
+        triggerIntruderHapticAlert()
     }
 
     fun addDeviceToWhitelist(device: DiscoveredDevice) {
@@ -1572,4 +1772,677 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         context.startActivity(chooser)
     }
+
+    // ==========================================
+    // Antivirus & Malware Protection Actions
+    // ==========================================
+
+    fun startAntivirusScan() {
+        antivirusScanJob?.cancel()
+        antivirusScanJob = viewModelScope.launch {
+            _antivirusState.value = _antivirusState.value.copy(
+                isScanning = true,
+                scanProgress = 0f,
+                threatsFound = 0
+            )
+            AntivirusScannerEngine.scanAllApps(getApplication()).collect { event ->
+                when (event) {
+                    is AntivirusScannerEngine.ScanProgressEvent.Started -> {
+                        _antivirusState.value = _antivirusState.value.copy(
+                            isScanning = true,
+                            totalCount = event.totalApps,
+                            scannedCount = 0,
+                            scanProgress = 0f
+                        )
+                    }
+                    is AntivirusScannerEngine.ScanProgressEvent.Progress -> {
+                        val progress = if (event.totalCount > 0) event.currentIndex.toFloat() / event.totalCount.toFloat() else 0f
+                        _antivirusState.value = _antivirusState.value.copy(
+                            isScanning = true,
+                            scannedCount = event.currentIndex,
+                            totalCount = event.totalCount,
+                            currentlyScanningApp = event.currentAppName,
+                            scanProgress = progress
+                        )
+                    }
+                    is AntivirusScannerEngine.ScanProgressEvent.Completed -> {
+                        val threats = event.results.count {
+                            it.riskLevel == AppRiskLevel.CRITICAL || it.riskLevel == AppRiskLevel.HIGH_RISK || it.riskLevel == AppRiskLevel.SUSPICIOUS
+                        }
+                        _scannedApps.value = event.results
+                        _antivirusState.value = _antivirusState.value.copy(
+                            isScanning = false,
+                            scanProgress = 1f,
+                            currentlyScanningApp = "",
+                            threatsFound = threats,
+                            lastScanTimestamp = System.currentTimeMillis()
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun cancelAntivirusScan() {
+        antivirusScanJob?.cancel()
+        _antivirusState.value = _antivirusState.value.copy(isScanning = false)
+    }
+
+    fun refreshSystemAudit() {
+        viewModelScope.launch {
+            _systemSecurityAudit.value = AntivirusScannerEngine.auditSystemSecurity(getApplication())
+            _deviceMetrics.value = JunkCleanerEngine.getMemoryMetrics(getApplication())
+        }
+    }
+
+    // ==========================================
+    // System & Cache Cleaner Actions
+    // ==========================================
+
+    fun refreshJunkStorage() {
+        viewModelScope.launch {
+            _isCalculatingJunk.value = true
+            try {
+                _junkCategories.value = JunkCleanerEngine.calculateJunkCategories(getApplication())
+                _deviceMetrics.value = JunkCleanerEngine.getMemoryMetrics(getApplication())
+            } finally {
+                _isCalculatingJunk.value = false
+            }
+        }
+    }
+
+    fun toggleJunkCategory(type: JunkType) {
+        val updated = _junkCategories.value.map {
+            if (it.id == type) it.copy(isSelected = !it.isSelected) else it
+        }
+        _junkCategories.value = updated
+    }
+
+    fun selectAllJunk(selected: Boolean) {
+        val updated = _junkCategories.value.map {
+            it.copy(isSelected = selected)
+        }
+        _junkCategories.value = updated
+    }
+
+    fun cleanSelectedJunk() {
+        viewModelScope.launch {
+            _isCleaningJunk.value = true
+            try {
+                val selectedTypes = _junkCategories.value.filter { it.isSelected }.map { it.id }.toSet()
+                val result = JunkCleanerEngine.executeClean(getApplication(), selectedTypes)
+                _lastCleanResult.value = result
+                // Re-calculate remaining junk & metrics
+                _junkCategories.value = JunkCleanerEngine.calculateJunkCategories(getApplication())
+                _deviceMetrics.value = JunkCleanerEngine.getMemoryMetrics(getApplication())
+            } finally {
+                _isCleaningJunk.value = false
+            }
+        }
+    }
+
+    fun quarantineApp(packageName: String) {
+        val set = _quarantinedPackageNames.value.toMutableSet()
+        set.add(packageName)
+        _quarantinedPackageNames.value = set
+        _scannedApps.value = _scannedApps.value.map {
+            if (it.packageName == packageName) it.copy(isQuarantined = true) else it
+        }
+    }
+
+    fun unquarantineApp(packageName: String) {
+        val set = _quarantinedPackageNames.value.toMutableSet()
+        set.remove(packageName)
+        _quarantinedPackageNames.value = set
+        _scannedApps.value = _scannedApps.value.map {
+            if (it.packageName == packageName) it.copy(isQuarantined = false) else it
+        }
+    }
+
+    fun whitelistPackage(packageName: String) {
+        val set = _whitelistedPackageNames.value.toMutableSet()
+        set.add(packageName)
+        _whitelistedPackageNames.value = set
+        _scannedApps.value = _scannedApps.value.map {
+            if (it.packageName == packageName) it.copy(isWhitelisted = true) else it
+        }
+    }
+
+    fun launchUninstallApp(context: Context, packageName: String) {
+        try {
+            val intent = Intent(Intent.ACTION_DELETE).apply {
+                data = Uri.parse("package:$packageName")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            launchAppSettings(context, packageName)
+        }
+    }
+
+    fun launchAppSettings(context: Context, packageName: String) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            android.util.Log.e("MainViewModel", "Could not open app settings", e)
+        }
+    }
+
+    // ==========================================
+    // AUTOMATIC DAILY SCAN SCHEDULER CONTROLS
+    // ==========================================
+
+    fun refreshScheduleSettings() {
+        _dailyScanSchedule.value = DailyScanScheduler.loadSettings(getApplication())
+    }
+
+    fun updateDailyScanSchedule(newSettings: DailyScanScheduleSettings) {
+        _dailyScanSchedule.value = newSettings
+        DailyScanScheduler.saveSettings(getApplication(), newSettings)
+    }
+
+    fun toggleDailyScanEnabled(enabled: Boolean) {
+        val updated = _dailyScanSchedule.value.copy(isEnabled = enabled)
+        updateDailyScanSchedule(updated)
+    }
+
+    fun setDailyScanTime(hour: Int, minute: Int) {
+        val updated = _dailyScanSchedule.value.copy(hour = hour, minute = minute)
+        updateDailyScanSchedule(updated)
+    }
+
+    fun updateDailyScanScope(scanAntivirus: Boolean, scanJunk: Boolean, autoCleanSafe: Boolean) {
+        val updated = _dailyScanSchedule.value.copy(
+            scanAntivirus = scanAntivirus,
+            scanJunkCleaner = scanJunk,
+            autoCleanSafeJunk = autoCleanSafe
+        )
+        updateDailyScanSchedule(updated)
+    }
+
+    fun runScheduledScanNow() {
+        if (_isExecutingScheduledScan.value) return
+        viewModelScope.launch {
+            _isExecutingScheduledScan.value = true
+            try {
+                val updated = DailyScanScheduler.executeScheduledScan(getApplication())
+                _dailyScanSchedule.value = updated
+                refreshJunkStorage()
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Error in manual scheduled scan execution", e)
+            } finally {
+                _isExecutingScheduledScan.value = false
+            }
+        }
+    }
+
+    // =========================================================================
+    // SECURITY DASHBOARD, RISK ENGINE & THREAT SCANNER CONTROLS
+    // =========================================================================
+
+    fun setScanFrequency(seconds: Int) {
+        val clamped = seconds.coerceIn(3, 300)
+        _scanFrequencySeconds.value = clamped
+        _backgroundDetectionStatus.value = _backgroundDetectionStatus.value.copy(scanIntervalSeconds = clamped)
+        if (_isRealTimeShieldActive.value) {
+            startShieldWatcher()
+        }
+    }
+
+    fun refreshNetworkRiskScore() {
+        if (_isCalculatingRiskScore.value) return
+        viewModelScope.launch {
+            _isCalculatingRiskScore.value = true
+            try {
+                val state = _wifiState.value
+                val devices = _discoveredDevices.value
+                val unauthorized = devices.count {
+                    !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed
+                }
+                val quarantined = totalQuarantinedCount.value
+                val unethicals = _unethicalDevices.value.size
+                val gateways = _managedGateways.value.size
+                val hasRogueGateway = _managedGateways.value.any { it.type == GatewayRouterType.ROGUE_DUPLICATE && !it.isQuarantined } ||
+                        devices.any { it.isRogueGateway && !it.isBlocked }
+                val hasArpSpoofing = _unethicalDevices.value.any { it.threatType == UnethicalThreatType.ARP_POISONER && !it.isQuarantined } ||
+                        devices.any { it.isDuplicateIp }
+
+                val assessment = repository.analyzeNetworkRiskScore(
+                    state = state,
+                    devices = devices,
+                    unauthorizedCount = unauthorized,
+                    quarantinedCount = quarantined,
+                    unethicalCount = unethicals,
+                    gatewaysCount = gateways,
+                    hasRogueGateway = hasRogueGateway,
+                    hasArpSpoofing = hasArpSpoofing
+                )
+                _networkRiskAssessment.value = assessment
+            } catch (e: Exception) {
+                android.util.Log.w("MainViewModel", "Failed to refresh risk score: ${e.localizedMessage}")
+            } finally {
+                _isCalculatingRiskScore.value = false
+            }
+        }
+    }
+
+    // =========================================================================
+    // WIFI SENTINEL AI: SCAN FOR THE UNETHICALS
+    // =========================================================================
+
+    fun scanForUnethicals() {
+        if (_isScanningForUnethicals.value) return
+        viewModelScope.launch {
+            _isScanningForUnethicals.value = true
+            try {
+                val auditedThreats = repository.auditUnethicalBehaviors(
+                    devices = _discoveredDevices.value,
+                    state = _wifiState.value
+                )
+
+                // Preserve already discovered or simulated threats unless re-evaluated
+                val current = _unethicalDevices.value.toMutableList()
+                for (threat in auditedThreats) {
+                    if (current.none { it.mac.equals(threat.mac, ignoreCase = true) }) {
+                        current.add(threat)
+                        // Auto record alert
+                        repository.recordSecurityAlert(
+                            title = "UNETHICAL THREAT DETECTED: ${threat.threatType.title}",
+                            description = threat.signatureDetail,
+                            deviceIp = threat.ip,
+                            deviceMac = threat.mac,
+                            severity = threat.severity,
+                            confidencePercent = 99
+                        )
+                    }
+                }
+
+                _unethicalDevices.value = current
+
+                if (current.any { !it.isQuarantined }) {
+                    triggerIntruderHapticAlert()
+                }
+
+                refreshNetworkRiskScore()
+            } catch (e: Exception) {
+                android.util.Log.e("MainViewModel", "Failed scanning for unethicals", e)
+            } finally {
+                _isScanningForUnethicals.value = false
+            }
+        }
+    }
+
+    fun quarantineUnethicalDevice(threatId: String) {
+        val currentList = _unethicalDevices.value
+        val threat = currentList.find { it.id == threatId } ?: return
+
+        // 1. Enforce physical firewall ACL isolation
+        networkAccessEnforcer.blockDeviceNetworkAccess(threat.mac, threat.ip, threat.vendor)
+
+        // 2. Mark threat as quarantined
+        _unethicalDevices.value = currentList.map {
+            if (it.id == threatId) it.copy(isQuarantined = true) else it
+        }
+
+        // 3. Sync to Subnet Devices if present
+        viewModelScope.launch {
+            repository.setDeviceBlocked(threat.mac, true)
+            _discoveredDevices.value = _discoveredDevices.value.map {
+                if (it.macAddress.equals(threat.mac, ignoreCase = true)) it.copy(isBlocked = true) else it
+            }
+            repository.recordSecurityAlert(
+                title = "UNETHICAL HOST QUARANTINED: ${threat.threatType.title}",
+                description = "Zero-Access ACL enforced on ${threat.ip} (${threat.mac}). All subnet and external packet injection severed.",
+                deviceIp = threat.ip,
+                deviceMac = threat.mac,
+                severity = "INFO",
+                confidencePercent = 100
+            )
+            refreshNetworkRiskScore()
+        }
+    }
+
+    fun unquarantineUnethicalDevice(threatId: String) {
+        val currentList = _unethicalDevices.value
+        val threat = currentList.find { it.id == threatId } ?: return
+
+        networkAccessEnforcer.unblockDeviceNetworkAccess(threat.mac)
+
+        _unethicalDevices.value = currentList.map {
+            if (it.id == threatId) it.copy(isQuarantined = false) else it
+        }
+
+        viewModelScope.launch {
+            repository.setDeviceBlocked(threat.mac, false)
+            _discoveredDevices.value = _discoveredDevices.value.map {
+                if (it.macAddress.equals(threat.mac, ignoreCase = true)) it.copy(isBlocked = false) else it
+            }
+            refreshNetworkRiskScore()
+        }
+    }
+
+    fun simulateUnethicalThreat(type: UnethicalThreatType = UnethicalThreatType.ARP_POISONER) {
+        viewModelScope.launch {
+            val (mockIp, mockMac, mockVendor, signature) = when (type) {
+                UnethicalThreatType.ARP_POISONER -> Quadruple(
+                    "192.168.1.189",
+                    "B8:27:EB:D3:44:01",
+                    "Raspberry Pi / Kali MITM Node",
+                    "Flooding gratuitous ARP replies claiming 192.168.1.1 is at B8:27:EB:D3:44:01."
+                )
+                UnethicalThreatType.PROMISCUOUS_SNIFFER -> Quadruple(
+                    "192.168.1.142",
+                    "00:0C:29:88:99:A1",
+                    "VMware Host / Wireshark Probe",
+                    "Host NIC operating in promiscuous listening mode capturing raw unencrypted packets."
+                )
+                UnethicalThreatType.EVIL_TWIN_CLONE -> Quadruple(
+                    "192.168.1.250",
+                    "50:C7:BF:99:11:00",
+                    "Hak5 WiFi Pineapple MK7",
+                    "Transmitting duplicate beacon frames with downgraded encryption handshake (WPA3 -> Open)."
+                )
+                UnethicalThreatType.DEAUTH_FLOODER -> Quadruple(
+                    "192.168.1.215",
+                    "24:0A:C4:55:66:77",
+                    "ESP8266 Deauther",
+                    "Injecting 802.11 disassociation/deauth burst frames at 120 packets/sec."
+                )
+                UnethicalThreatType.PORT_SCANNER -> Quadruple(
+                    "192.168.1.164",
+                    "00:1E:67:33:99:88",
+                    "Nmap SYN Scanner",
+                    "Rapid sequential TCP SYN port probes targeting ports 22, 23, 80, 445, 8080."
+                )
+                UnethicalThreatType.MAC_CLOAKED_IMPOSTOR -> Quadruple(
+                    "192.168.1.177",
+                    "DA:A1:19:62:33:EF",
+                    "Cloaked Attacker (Randomized MAC)",
+                    "Rapidly cycling Layer-2 MAC address headers to bypass static authorization filters."
+                )
+            }
+
+            val newThreat = UnethicalDevice(
+                ip = mockIp,
+                mac = mockMac,
+                vendor = mockVendor,
+                threatType = type,
+                severity = type.defaultSeverity,
+                signatureDetail = signature,
+                isQuarantined = false,
+                packetAnomalyCount = Random.nextInt(85, 420)
+            )
+
+            val current = _unethicalDevices.value.filter { !it.mac.equals(mockMac, ignoreCase = true) }.toMutableList()
+            current.add(0, newThreat)
+            _unethicalDevices.value = current
+
+            repository.recordSecurityAlert(
+                title = "UNETHICAL ACTOR DETECTED: ${type.title}",
+                description = signature,
+                deviceIp = mockIp,
+                deviceMac = mockMac,
+                severity = type.defaultSeverity,
+                confidencePercent = 99
+            )
+
+            triggerIntruderHapticAlert()
+            refreshNetworkRiskScore()
+        }
+    }
+
+    // =========================================================================
+    // MULTI-GATEWAYS & ROUTERS MANAGEMENT FILTERS (FULL STACK)
+    // =========================================================================
+
+    fun setGatewayFilter(category: GatewayFilterCategory) {
+        _selectedGatewayFilter.value = category
+    }
+
+    fun setPrimaryGateway(gatewayId: String) {
+        _managedGateways.value = _managedGateways.value.map { node ->
+            if (node.id == gatewayId) {
+                node.copy(isCurrentActive = true, type = GatewayRouterType.PRIMARY_DEFAULT)
+            } else if (node.type == GatewayRouterType.PRIMARY_DEFAULT) {
+                node.copy(isCurrentActive = false, type = GatewayRouterType.SECONDARY_GATEWAY)
+            } else {
+                node.copy(isCurrentActive = false)
+            }
+        }
+        refreshNetworkRiskScore()
+    }
+
+    fun toggleGatewayLock(gatewayId: String) {
+        _managedGateways.value = _managedGateways.value.map { node ->
+            if (node.id == gatewayId) {
+                val newLock = !node.isLocked
+                node.copy(
+                    isLocked = newLock,
+                    filterPolicy = if (newLock) "STRICT_ARP_LOCKED" else "DYNAMIC_ARP_LEARNING"
+                )
+            } else node
+        }
+    }
+
+    fun quarantineGateway(gatewayId: String) {
+        val current = _managedGateways.value
+        val target = current.find { it.id == gatewayId } ?: return
+
+        networkAccessEnforcer.blockDeviceNetworkAccess(target.mac, target.ip, target.vendor)
+
+        _managedGateways.value = current.map { node ->
+            if (node.id == gatewayId) {
+                node.copy(
+                    isQuarantined = true,
+                    isCurrentActive = false,
+                    filterPolicy = "QUARANTINE_DROP_ZERO_ROUTING"
+                )
+            } else node
+        }
+
+        viewModelScope.launch {
+            repository.recordSecurityAlert(
+                title = "GATEWAY ROUTER QUARANTINED",
+                description = "Gateway node ${target.ip} (${target.vendor}) quarantined by administrator. Traffic drop enforced.",
+                deviceIp = target.ip,
+                deviceMac = target.mac,
+                severity = "CRITICAL",
+                confidencePercent = 100
+            )
+            refreshNetworkRiskScore()
+        }
+    }
+
+    fun unquarantineGateway(gatewayId: String) {
+        val current = _managedGateways.value
+        val target = current.find { it.id == gatewayId } ?: return
+
+        networkAccessEnforcer.unblockDeviceNetworkAccess(target.mac)
+
+        _managedGateways.value = current.map { node ->
+            if (node.id == gatewayId) {
+                node.copy(
+                    isQuarantined = false,
+                    filterPolicy = "STRICT_ACL_MONITORED"
+                )
+            } else node
+        }
+
+        viewModelScope.launch {
+            refreshNetworkRiskScore()
+        }
+    }
+
+    fun addManagedGateway(
+        ip: String,
+        mac: String,
+        ssid: String,
+        type: GatewayRouterType,
+        vendor: String
+    ) {
+        val newNode = GatewayRouterNode(
+            ip = ip.trim(),
+            mac = mac.trim().uppercase(),
+            ssid = ssid.trim(),
+            bssid = mac.trim().uppercase(),
+            type = type,
+            vendor = vendor.ifBlank { "Managed Router Node" },
+            hopMetric = if (type == GatewayRouterType.PRIMARY_DEFAULT) 1 else 2,
+            latencyMs = Random.nextLong(2, 12),
+            isCurrentActive = (type == GatewayRouterType.PRIMARY_DEFAULT && _managedGateways.value.none { it.isCurrentActive }),
+            isLocked = true,
+            isQuarantined = false,
+            filterPolicy = "MANAGED_ACTIVE_INSPECTED",
+            trafficVolumeMb = 1.0f,
+            routeSubnet = "${ip.substringBeforeLast(".")}.0/24"
+        )
+
+        _managedGateways.value = _managedGateways.value + newNode
+        refreshNetworkRiskScore()
+    }
+
+    fun simulateRogueGatewayBreach() {
+        viewModelScope.launch {
+            val rogueNode = GatewayRouterNode(
+                ip = _wifiState.value.gatewayIp.ifBlank { "192.168.1.1" },
+                mac = "A0:C5:89:FE:11:77",
+                ssid = "Rogue-MitM-Tap",
+                bssid = "A0:C5:89:FE:11:77",
+                type = GatewayRouterType.ROGUE_DUPLICATE,
+                vendor = "Rogue Hak5 Pineapple / APR Spoof",
+                hopMetric = 1,
+                latencyMs = 1L,
+                isCurrentActive = false,
+                isLocked = false,
+                isQuarantined = false,
+                filterPolicy = "UNVERIFIED_SPOOF_RISK",
+                trafficVolumeMb = 0.8f,
+                routeSubnet = "${_wifiState.value.ipAddress.substringBeforeLast(".")}.0/24"
+            )
+
+            val current = _managedGateways.value.filter { it.mac != rogueNode.mac }.toMutableList()
+            current.add(0, rogueNode)
+            _managedGateways.value = current
+
+            // Auto select Rogue filter category so user immediately sees it
+            _selectedGatewayFilter.value = GatewayFilterCategory.ROGUE_DUPLICATE
+
+            repository.recordSecurityAlert(
+                title = "ZERO-TOLERANCE: Rogue Gateway Collision",
+                description = "Duplicate Gateway node detected claiming IP ${rogueNode.ip} with illegitimate MAC ${rogueNode.mac}.",
+                deviceIp = rogueNode.ip,
+                deviceMac = rogueNode.mac,
+                severity = "CRITICAL",
+                confidencePercent = 100
+            )
+
+            triggerIntruderHapticAlert()
+            refreshNetworkRiskScore()
+        }
+    }
+
+    private fun defaultManagedGateways(): List<GatewayRouterNode> {
+        return listOf(
+            GatewayRouterNode(
+                ip = "192.168.1.1",
+                mac = "00:1A:2B:3C:4D:01",
+                ssid = "SentinelSecure-Enterprise",
+                bssid = "00:1A:2B:3C:4D:01",
+                type = GatewayRouterType.PRIMARY_DEFAULT,
+                vendor = "Cisco Catalyst Gateway",
+                hopMetric = 1,
+                latencyMs = 2L,
+                isCurrentActive = true,
+                isLocked = true,
+                isQuarantined = false,
+                filterPolicy = "STRICT_ARP_LOCKED",
+                trafficVolumeMb = 48.2f,
+                routeSubnet = "192.168.1.0/24"
+            ),
+            GatewayRouterNode(
+                ip = "192.168.1.254",
+                mac = "38:D5:47:89:AB:02",
+                ssid = "SentinelSecure-Mesh-North",
+                bssid = "38:D5:47:89:AB:02",
+                type = GatewayRouterType.MESH_SATELLITE,
+                vendor = "Ubiquiti UniFi Mesh 6",
+                hopMetric = 2,
+                latencyMs = 5L,
+                isCurrentActive = false,
+                isLocked = true,
+                isQuarantined = false,
+                filterPolicy = "BACKHAUL_ENCRYPTED",
+                trafficVolumeMb = 19.8f,
+                routeSubnet = "192.168.1.0/24"
+            ),
+            GatewayRouterNode(
+                ip = "10.0.50.1",
+                mac = "50:C7:BF:22:EE:99",
+                ssid = "VLAN50-IoT-Isolate",
+                bssid = "50:C7:BF:22:EE:99",
+                type = GatewayRouterType.SECONDARY_GATEWAY,
+                vendor = "MikroTik RouterBOARD",
+                hopMetric = 2,
+                latencyMs = 7L,
+                isCurrentActive = false,
+                isLocked = false,
+                isQuarantined = false,
+                filterPolicy = "ISOLATED_GUEST_VLAN",
+                trafficVolumeMb = 8.4f,
+                routeSubnet = "10.0.50.0/24"
+            ),
+            GatewayRouterNode(
+                ip = "172.17.0.1",
+                mac = "02:42:AC:11:00:01",
+                ssid = "docker0-virtual",
+                bssid = "02:42:AC:11:00:01",
+                type = GatewayRouterType.VIRTUAL_BRIDGE,
+                vendor = "Linux Kernel Bridge",
+                hopMetric = 1,
+                latencyMs = 1L,
+                isCurrentActive = false,
+                isLocked = true,
+                isQuarantined = false,
+                filterPolicy = "CONTAINER_NAT_FILTER",
+                trafficVolumeMb = 3.1f,
+                routeSubnet = "172.17.0.0/16"
+            )
+        )
+    }
+
+    // ==========================================
+    // WORKSPACES, NATIVE BACKUP & NODES PERGAMUS
+    // ==========================================
+    val workspaceClusterManager: WorkspaceClusterManager = WorkspaceClusterManager.getInstance(application)
+    val workspaces: StateFlow<List<WorkspaceProfile>> = workspaceClusterManager.workspaces
+    val currentWorkspace: StateFlow<WorkspaceProfile> = workspaceClusterManager.currentWorkspace
+    val pergamusNodes: StateFlow<List<PergamusClusterNode>> = workspaceClusterManager.pergamusNodes
+    val backupSnapshots: StateFlow<List<ClusterBackupSnapshot>> = workspaceClusterManager.backupSnapshots
+    val trialEntries: StateFlow<List<TrialErrorEntry>> = workspaceClusterManager.trialEntries
+    val betaTesters: StateFlow<List<RecurringBetaTester>> = workspaceClusterManager.betaTesters
+    val lastFlightResult: StateFlow<BetaFlightRunResult?> = workspaceClusterManager.lastFlightResult
+    val isFlightRunning: StateFlow<Boolean> = workspaceClusterManager.isFlightRunning
+    val isClusterSyncing: StateFlow<Boolean> = workspaceClusterManager.isClusterSyncing
+
+    fun selectWorkspace(id: String) = workspaceClusterManager.selectWorkspace(id)
+    fun syncAllPergamusNodes(onComplete: (() -> Unit)? = null) = workspaceClusterManager.syncAllNodes(onComplete)
+    fun toggleIsolatePergamusNode(nodeId: String) = workspaceClusterManager.toggleIsolateNode(nodeId)
+    fun addPergamusNode(name: String, ip: String, mac: String, role: String) =
+        workspaceClusterManager.addPergamusNode(name, ip, mac, role)
+    fun createNativeClusterBackup(note: String = "", onCreated: ((ClusterBackupSnapshot) -> Unit)? = null) =
+        workspaceClusterManager.createNativeClusterBackup(note, onCreated)
+    fun restoreClusterSnapshot(snapshotId: String) = workspaceClusterManager.restoreClusterSnapshot(snapshotId)
+    fun deleteClusterSnapshot(snapshotId: String) = workspaceClusterManager.deleteBackupSnapshot(snapshotId)
+    fun runTrialSimulation(title: String, category: TrialCategory, protocol: String, sourceNode: String) =
+        workspaceClusterManager.runTrialSimulation(title, category, protocol, sourceNode)
+    fun enrollRecurringBetaTester(name: String, email: String, device: String) =
+        workspaceClusterManager.enrollRecurringBetaTester(name, email, device)
+    fun runDailyBetaFlightSuite(onComplete: ((BetaFlightRunResult) -> Unit)? = null) =
+        workspaceClusterManager.runDailyBetaFlightSuite(onComplete)
 }
+
+private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)

@@ -6,6 +6,10 @@ import com.example.data.model.AiOptimizationReport
 import com.example.data.model.DiscoveredDevice
 import com.example.data.model.NearbyAccessPoint
 import com.example.data.model.NetworkHardeningRecommendation
+import com.example.data.model.NetworkRiskAssessment
+import com.example.data.model.ThreatVectorBreakdown
+import com.example.data.model.UnethicalDevice
+import com.example.data.model.UnethicalThreatType
 import com.example.data.model.WifiConnectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -397,6 +401,286 @@ class GeminiService {
                 zeroTrustAction = "Implement MAC-Filtering Access Control List (ACL) and bind static DHCP reservation to 0.0.0.0 (NULL Route)."
             )
         }
+    }
+
+    suspend fun analyzeCurrentNetworkRiskScore(
+        telemetry: WifiConnectionState,
+        devices: List<DiscoveredDevice>,
+        unauthorizedCount: Int,
+        quarantinedCount: Int,
+        unethicalCount: Int,
+        gatewaysCount: Int,
+        hasRogueGateway: Boolean,
+        hasArpSpoofing: Boolean
+    ): NetworkRiskAssessment = withContext(Dispatchers.IO) {
+        if (!isApiKeyConfigured) {
+            return@withContext generateLocalHeuristicRiskScore(
+                telemetry, devices, unauthorizedCount, quarantinedCount,
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+            )
+        }
+
+        val prompt = """
+            You are WiFi Sentinel AI, a Cybersecurity Threat Assessment Engine.
+            Analyze the following real-time network environment and provide an accurate Risk Score (0-100, where 0 is pristine/safe and 100 is critical/actively compromised):
+            - SSID: ${telemetry.ssid} (Security: ${telemetry.securityProtocol})
+            - Connected Devices: ${devices.size} total, with $unauthorizedCount unauthorized/untrusted devices.
+            - Quarantined Devices (ACL Drop): $quarantinedCount devices isolated.
+            - Unethical Threat Actors Detected: $unethicalCount (e.g. ARP poisoners, promiscuous sniffers, port scanners).
+            - Gateway Topologies: $gatewaysCount gateways detected. (Rogue Gateway Present: $hasRogueGateway, ARP Spoofing Active: $hasArpSpoofing).
+            - Wi-Fi Signal: ${telemetry.rssi} dBm on Channel ${telemetry.channel} (${telemetry.band}).
+
+            Output strictly JSON with format:
+            {
+              "riskScore": <integer 0-100>,
+              "riskLevel": "<SECURE | LOW | MODERATE | HIGH | CRITICAL>",
+              "summary": "<one comprehensive sentence summarizing network threat posture>",
+              "threatVectors": [
+                {
+                  "vectorName": "<e.g. Unethical Packet Sniffing / Rogue Gateway Spoofing / Unauthorized Subnet Devices / Encryption Hardening>",
+                  "score": <integer 0-100>,
+                  "severity": "<SAFE | WARNING | CRITICAL>",
+                  "detail": "<brief description of the risk factor>"
+                }
+              ],
+              "recommendations": [
+                "<actionable recommendation 1>",
+                "<actionable recommendation 2>",
+                "<actionable recommendation 3>"
+              ]
+            }
+            Return ONLY raw JSON without markdown code blocks.
+        """.trimIndent()
+
+        try {
+            val raw = callGeminiApi(prompt)
+            parseRiskAssessment(raw, telemetry, devices, unauthorizedCount, quarantinedCount, unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing)
+        } catch (e: Exception) {
+            Log.w("GeminiService", "Gemini API risk score calculation failed, using heuristic engine: ${e.localizedMessage}")
+            generateLocalHeuristicRiskScore(
+                telemetry, devices, unauthorizedCount, quarantinedCount,
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+            )
+        }
+    }
+
+    private fun parseRiskAssessment(
+        jsonStr: String,
+        telemetry: WifiConnectionState,
+        devices: List<DiscoveredDevice>,
+        unauthorizedCount: Int,
+        quarantinedCount: Int,
+        unethicalCount: Int,
+        gatewaysCount: Int,
+        hasRogueGateway: Boolean,
+        hasArpSpoofing: Boolean
+    ): NetworkRiskAssessment {
+        val rawText = extractText(jsonStr).replace("```json", "").replace("```", "").trim()
+        return try {
+            val obj = JSONObject(rawText)
+            val vectorsArray = obj.optJSONArray("threatVectors")
+            val vectors = mutableListOf<ThreatVectorBreakdown>()
+            if (vectorsArray != null) {
+                for (i in 0 until vectorsArray.length()) {
+                    val item = vectorsArray.getJSONObject(i)
+                    vectors.add(
+                        ThreatVectorBreakdown(
+                            vectorName = item.optString("vectorName", "Threat Vector"),
+                            score = item.optInt("score", 30),
+                            severity = item.optString("severity", "WARNING"),
+                            detail = item.optString("detail", "")
+                        )
+                    )
+                }
+            }
+
+            val recsArray = obj.optJSONArray("recommendations")
+            val recs = mutableListOf<String>()
+            if (recsArray != null) {
+                for (i in 0 until recsArray.length()) {
+                    recs.add(recsArray.getString(i))
+                }
+            }
+
+            val score = obj.optInt("riskScore", 20).coerceIn(0, 100)
+            val level = obj.optString("riskLevel", when {
+                score >= 80 -> "CRITICAL"
+                score >= 60 -> "HIGH"
+                score >= 40 -> "MODERATE"
+                score >= 20 -> "LOW"
+                else -> "SECURE"
+            })
+
+            NetworkRiskAssessment(
+                riskScore = score,
+                riskLevel = level,
+                summary = obj.optString("summary", "Network assessment finalized."),
+                threatVectors = if (vectors.isNotEmpty()) vectors else generateDefaultThreatVectors(unauthorizedCount, unethicalCount, hasRogueGateway, telemetry),
+                recommendations = if (recs.isNotEmpty()) recs else listOf("Maintain active Sentinel Sentry shield", "Keep unauthorized devices quarantined"),
+                isGeminiLive = true,
+                timestamp = System.currentTimeMillis()
+            )
+        } catch (e: Exception) {
+            generateLocalHeuristicRiskScore(
+                telemetry, devices, unauthorizedCount, quarantinedCount,
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+            )
+        }
+    }
+
+    private fun generateLocalHeuristicRiskScore(
+        telemetry: WifiConnectionState,
+        devices: List<DiscoveredDevice>,
+        unauthorizedCount: Int,
+        quarantinedCount: Int,
+        unethicalCount: Int,
+        gatewaysCount: Int,
+        hasRogueGateway: Boolean,
+        hasArpSpoofing: Boolean
+    ): NetworkRiskAssessment {
+        var baseScore = 12
+        val vectors = mutableListOf<ThreatVectorBreakdown>()
+        val recommendations = mutableListOf<String>()
+
+        // Encryption risk
+        val isWeakSecurity = telemetry.securityProtocol.contains("Open", ignoreCase = true) ||
+                telemetry.securityProtocol.contains("WEP", ignoreCase = true)
+        if (isWeakSecurity) {
+            baseScore += 35
+            vectors.add(ThreatVectorBreakdown("Wi-Fi Encryption", 85, "CRITICAL", "Unencrypted or obsolete WEP network"))
+            recommendations.add("Upgrade router configuration to WPA3-Personal or WPA2-AES")
+        } else {
+            vectors.add(ThreatVectorBreakdown("Wi-Fi Encryption", 10, "SAFE", "Modern ${telemetry.securityProtocol} handshake active"))
+        }
+
+        // Unethical presence
+        if (unethicalCount > 0) {
+            baseScore += (unethicalCount * 25).coerceAtMost(50)
+            vectors.add(ThreatVectorBreakdown("Unethical Threats", 90, "CRITICAL", "$unethicalCount unethical actors (e.g. sniffing / ARP poison) detected"))
+            recommendations.add("Enforce immediate 1-tap Quarantine on all detected unethical hosts")
+        } else {
+            vectors.add(ThreatVectorBreakdown("Unethical Actors", 5, "SAFE", "No promiscuous sniffers or ARP poisoners identified"))
+        }
+
+        // Rogue Gateway / ARP Spoofing
+        if (hasRogueGateway || hasArpSpoofing) {
+            baseScore += 40
+            vectors.add(ThreatVectorBreakdown("Gateway Integrity", 95, "CRITICAL", "Rogue gateway or ARP spoofing detected! High MitM hazard."))
+            recommendations.add("Lock primary gateway MAC binding and isolate duplicate gateway nodes")
+        } else {
+            vectors.add(ThreatVectorBreakdown("Gateway Integrity", 12, "SAFE", "Subnet gateway verified and locked to baseline MAC"))
+        }
+
+        // Unauthorized devices
+        if (unauthorizedCount > 0) {
+            baseScore += (unauthorizedCount * 10).coerceAtMost(30)
+            vectors.add(ThreatVectorBreakdown("Subnet Intruders", 70, "WARNING", "$unauthorizedCount unverified devices active on subnet"))
+            recommendations.add("Audit unknown hosts and assign to guest VLAN or quarantine")
+        } else {
+            vectors.add(ThreatVectorBreakdown("Subnet Perimeter", 8, "SAFE", "All connected entities authorized in whitelist"))
+        }
+
+        // Mitigation credit for quarantined devices
+        if (quarantinedCount > 0) {
+            baseScore -= (quarantinedCount * 6).coerceAtMost(20)
+        }
+
+        val finalScore = baseScore.coerceIn(5, 98)
+        val level = when {
+            finalScore >= 80 -> "CRITICAL"
+            finalScore >= 60 -> "HIGH"
+            finalScore >= 40 -> "MODERATE"
+            finalScore >= 20 -> "LOW"
+            else -> "SECURE"
+        }
+
+        val summary = when {
+            hasRogueGateway -> "CRITICAL ALERT: Rogue Gateway attempt detected on ${telemetry.ssid}. Immediate lockdown required."
+            unethicalCount > 0 -> "HIGH THREAT: $unethicalCount unethical device(s) identified on local subnet."
+            unauthorizedCount > 0 -> "ELEVATED RISK: $unauthorizedCount unauthorized device(s) accessing ${telemetry.ssid}."
+            else -> "SECURE: Network perimeter hardened with 0 unverified intrusions."
+        }
+
+        return NetworkRiskAssessment(
+            riskScore = finalScore,
+            riskLevel = level,
+            summary = summary,
+            threatVectors = vectors,
+            recommendations = recommendations.ifEmpty { listOf("Maintain active real-time shield", "Periodically scan for unethical actors") },
+            isGeminiLive = false,
+            timestamp = System.currentTimeMillis()
+        )
+    }
+
+    private fun generateDefaultThreatVectors(
+        unauthorizedCount: Int,
+        unethicalCount: Int,
+        hasRogueGateway: Boolean,
+        telemetry: WifiConnectionState
+    ): List<ThreatVectorBreakdown> {
+        return listOf(
+            ThreatVectorBreakdown("Wi-Fi Encryption", if (telemetry.securityProtocol.contains("Open")) 90 else 15, if (telemetry.securityProtocol.contains("Open")) "CRITICAL" else "SAFE", telemetry.securityProtocol),
+            ThreatVectorBreakdown("Unethical Vectors", if (unethicalCount > 0) 85 else 10, if (unethicalCount > 0) "CRITICAL" else "SAFE", "$unethicalCount unethical behaviors"),
+            ThreatVectorBreakdown("Gateway Hardening", if (hasRogueGateway) 95 else 10, if (hasRogueGateway) "CRITICAL" else "SAFE", "Subnet Gateway: ${telemetry.gatewayIp}"),
+            ThreatVectorBreakdown("Host Verification", if (unauthorizedCount > 0) 70 else 10, if (unauthorizedCount > 0) "WARNING" else "SAFE", "$unauthorizedCount unauthorized hosts")
+        )
+    }
+
+    suspend fun auditUnethicalBehaviors(
+        devices: List<DiscoveredDevice>,
+        telemetry: WifiConnectionState
+    ): List<UnethicalDevice> = withContext(Dispatchers.IO) {
+        val detected = mutableListOf<UnethicalDevice>()
+
+        // 1. Check for Rogue Gateway / ARP Poisoning
+        val rogueGateways = devices.filter { it.isRogueGateway }
+        for (rg in rogueGateways) {
+            detected.add(
+                UnethicalDevice(
+                    ip = rg.ip,
+                    mac = rg.macAddress,
+                    vendor = rg.vendor.ifBlank { "Rogue Gateway Spoof" },
+                    threatType = UnethicalThreatType.ARP_POISONER,
+                    severity = "CRITICAL",
+                    signatureDetail = "Detected sending unsolicited gratuitous ARP replies mapping gateway ${telemetry.gatewayIp} to illegitimate MAC ${rg.macAddress}.",
+                    isQuarantined = rg.isBlocked
+                )
+            )
+        }
+
+        // 2. Check for Duplicate IP / Collision hijacker
+        val duplicateIps = devices.filter { it.isDuplicateIp && !it.isRogueGateway }
+        for (dip in duplicateIps) {
+            detected.add(
+                UnethicalDevice(
+                    ip = dip.ip,
+                    mac = dip.macAddress,
+                    vendor = dip.vendor.ifBlank { "IP Impostor" },
+                    threatType = UnethicalThreatType.MAC_CLOAKED_IMPOSTOR,
+                    severity = "HIGH",
+                    signatureDetail = "Layer-2 IP collision & duplicate MAC clone injecting conflicting DHCP response frames.",
+                    isQuarantined = dip.isBlocked
+                )
+            )
+        }
+
+        // 3. Check for Suspicious Port Scanners
+        val portProbers = devices.filter { it.openPorts.size >= 3 && !it.isAuthorized && !it.isSelf && !it.isGateway }
+        for (prober in portProbers) {
+            detected.add(
+                UnethicalDevice(
+                    ip = prober.ip,
+                    mac = prober.macAddress,
+                    vendor = prober.vendor.ifBlank { "Unidentified Node" },
+                    threatType = UnethicalThreatType.PORT_SCANNER,
+                    severity = "HIGH",
+                    signatureDetail = "High-frequency TCP SYN port scan fingerprint across internal ports (${prober.openPorts.joinToString()}).",
+                    isQuarantined = prober.isBlocked
+                )
+            )
+        }
+
+        return@withContext detected
     }
 }
 

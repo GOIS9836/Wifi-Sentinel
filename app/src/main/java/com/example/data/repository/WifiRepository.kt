@@ -11,7 +11,9 @@ import com.example.data.model.DiscoveredDevice
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
 import com.example.data.model.NetworkHardeningRecommendation
+import com.example.data.model.NetworkRiskAssessment
 import com.example.data.model.ThreatLevel
+import com.example.data.model.UnethicalDevice
 import com.example.data.model.WifiConnectionState
 import com.example.data.remote.GeminiService
 import com.example.service.BluetoothSentryScanner
@@ -286,6 +288,35 @@ class WifiRepository(
         state: WifiConnectionState
     ): List<NetworkHardeningRecommendation> {
         return geminiService.generateNetworkHardeningRecommendations(unknownDevices, state)
+    }
+
+    suspend fun analyzeNetworkRiskScore(
+        state: WifiConnectionState,
+        devices: List<DiscoveredDevice>,
+        unauthorizedCount: Int,
+        quarantinedCount: Int,
+        unethicalCount: Int,
+        gatewaysCount: Int,
+        hasRogueGateway: Boolean,
+        hasArpSpoofing: Boolean
+    ): NetworkRiskAssessment {
+        return geminiService.analyzeCurrentNetworkRiskScore(
+            telemetry = state,
+            devices = devices,
+            unauthorizedCount = unauthorizedCount,
+            quarantinedCount = quarantinedCount,
+            unethicalCount = unethicalCount,
+            gatewaysCount = gatewaysCount,
+            hasRogueGateway = hasRogueGateway,
+            hasArpSpoofing = hasArpSpoofing
+        )
+    }
+
+    suspend fun auditUnethicalBehaviors(
+        devices: List<DiscoveredDevice>,
+        state: WifiConnectionState
+    ): List<UnethicalDevice> {
+        return geminiService.auditUnethicalBehaviors(devices, state)
     }
 
     fun startBtPerimeterScan(onThreat: (BtPerimeterDevice) -> Unit) {

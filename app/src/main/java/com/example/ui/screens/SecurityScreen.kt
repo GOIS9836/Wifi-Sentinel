@@ -74,6 +74,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -85,6 +86,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.DiscoveredDevice
@@ -148,6 +150,7 @@ fun SecurityScreen(
     var aliasInput by remember { mutableStateOf("") }
     var showAlertsDialog by remember { mutableStateOf(false) }
     var showGatewayTransitionsDialog by remember { mutableStateOf(false) }
+    var currentSecurityTab by remember { mutableIntStateOf(0) } // 0 = DASHBOARD, 1 = SENTRY & WHITELIST
 
     val unauthorizedList = devices.filter { !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isFalsePositiveSuppressed }
     val fpSuppressedList = devices.filter { it.isFalsePositiveSuppressed || (it.isRandomizedMac && it.isAuthorized) }
@@ -160,13 +163,71 @@ fun SecurityScreen(
         else -> devices
     }
 
-    LazyColumn(
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .background(com.example.ui.theme.CyberBackground)
     ) {
+        // Top Security Section Segmented Tab Bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(CyberSurfaceElevated)
+                .border(1.dp, CyberBorder, RoundedCornerShape(12.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf(
+                "🛡️ Threat Dashboard",
+                "⚡ Sentry & Whitelist",
+                "🏢 Opifex & Pergamus"
+            ).forEachIndexed { index, label ->
+                val isSelected = currentSecurityTab == index
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isSelected) CyberCyan.copy(alpha = 0.2f) else Color.Transparent)
+                        .clickable { currentSecurityTab = index }
+                        .padding(vertical = 8.dp)
+                        .testTag(
+                            when (index) {
+                                0 -> "tab_security_dashboard"
+                                1 -> "tab_sentry_whitelist"
+                                else -> "tab_opifex_pergamus"
+                            }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = label,
+                        color = if (isSelected) CyberCyan else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        if (currentSecurityTab == 0) {
+            SecurityDashboardScreen(
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxSize(),
+                onNavigateToHostRadar = { currentSecurityTab = 1 },
+                onNavigateToSentry = { currentSecurityTab = 1 }
+            )
+        } else if (currentSecurityTab == 1) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 16.dp),
+                contentPadding = PaddingValues(top = 8.dp, bottom = 100.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
         // Live Real-Time Telemetry & Timestamp Clock Banner
         item {
             RealtimeTelemetryClockBanner(
@@ -439,6 +500,14 @@ fun SecurityScreen(
                     } else null
                 )
             }
+        }
+        }
+        } else {
+            WorkspaceClusterScreen(
+                viewModel = viewModel,
+                onBack = { currentSecurityTab = 0 },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 

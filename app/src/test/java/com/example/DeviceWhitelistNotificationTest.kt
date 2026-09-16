@@ -34,6 +34,7 @@ class DeviceWhitelistNotificationTest {
     @Before
     fun setup() {
         application = ApplicationProvider.getApplicationContext()
+        org.robolectric.Shadows.shadowOf(application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
         viewModel = MainViewModel(application)
     }
 
@@ -220,5 +221,54 @@ class DeviceWhitelistNotificationTest {
 
         val whitelistedAfter = dao.getWhitelistedDevicesList()
         assertFalse("Device should no longer be authorized in Room", whitelistedAfter.any { it.macAddress.equals(testDev.macAddress, ignoreCase = true) && it.isAuthorized })
+    }
+
+    @Test
+    fun testPostUnauthorizedDeviceAlertDispatchesNotificationWithActions() {
+        val testDev = DiscoveredDevice(
+            ip = "192.168.1.177",
+            macAddress = "AA:BB:CC:DD:EE:FF",
+            vendor = "Rogue Intruder Microcontroller",
+            isAuthorized = false
+        )
+
+        val posted = SecurityNotificationDispatcher.postUnauthorizedDeviceAlert(
+            context = application,
+            device = testDev,
+            threatReason = "Zero-tolerance: Unauthorized host detected by background scanner"
+        )
+        assertTrue("Notification should be successfully posted", posted)
+
+        val notificationManager = application.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notifications = notificationManager.activeNotifications
+        assertTrue("Active notifications should contain the posted alert", notifications.any { it.id == testDev.macAddress.uppercase().hashCode() })
+
+        val targetNotification = notifications.first { it.id == testDev.macAddress.uppercase().hashCode() }.notification
+        assertNotNull("Target notification should exist", targetNotification)
+        assertEquals(SecurityNotificationDispatcher.CHANNEL_ID, targetNotification.channelId)
+        assertTrue("Notification should have interactive actions (Block / Whitelist)", targetNotification.actions != null && targetNotification.actions.isNotEmpty())
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun testSecurityAlertActionReceiverBlockAction() = runTest {
+        val targetMac = "11:22:33:44:55:66"
+        val targetIp = "192.168.1.199"
+
+        val receiver = com.example.service.SecurityAlertActionReceiver()
+        receiver.executeAction(
+            context = application,
+            action = com.example.service.SecurityAlertActionReceiver.ACTION_BLOCK_DEVICE,
+            mac = targetMac,
+            ip = targetIp,
+            vendor = "Suspicious Rogue Device",
+            notificationId = 9999
+        )
+
+        // Verify device was recorded in database as blocked
+        val dao = com.example.data.local.AppDatabase.getInstance(application).networkDeviceDao()
+        val device = dao.getDeviceByMac(targetMac)
+        assertNotNull("Device should be recorded in DB", device)
+        assertTrue("Device should be marked as blocked", device?.isBlocked == true)
     }
 }

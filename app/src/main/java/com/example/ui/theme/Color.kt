@@ -12,6 +12,7 @@ val CyberCyan = Color(0xFF00E5FF)
 val CyberTeal = Color(0xFF00F5D4)
 val CyberGreen = Color(0xFF10B981)
 val CyberAmber = Color(0xFFF59E0B)
+val CyberYellow = Color(0xFFF59E0B)
 val CyberRed = Color(0xFFEF4444)
 val CyberPurple = Color(0xFFA855F7)
 

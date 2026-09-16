@@ -1,9 +1,11 @@
 package com.example
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import com.example.service.SecurityNotificationDispatcher
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -12,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +34,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
@@ -63,11 +67,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.example.data.model.AppRiskLevel
 import com.example.ui.MainViewModel
 import com.example.ui.screens.AiAdvisorScreen
+import com.example.ui.screens.AntivirusCleanerScreen
 import com.example.ui.screens.ChannelRadarScreen
 import com.example.ui.screens.SecurityScreen
 import com.example.ui.screens.SignalScreen
+import com.example.ui.screens.WorkspaceClusterScreen
+import androidx.compose.material.icons.filled.Hub
 import com.example.ui.theme.AlertRedGlow
 import com.example.ui.theme.CyberBorder
 import com.example.ui.theme.CyberCyan
@@ -95,12 +103,26 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
 }
 
 @Composable
 fun SentinelApp(viewModel: MainViewModel) {
     val context = LocalContext.current
-    var selectedTab by remember { mutableIntStateOf(0) }
+    val activity = context as? ComponentActivity
+    val initialTab = remember {
+        val intent = activity?.intent
+        when {
+            intent?.getBooleanExtra(SecurityNotificationDispatcher.EXTRA_NAVIGATE_TO_CLEANER, false) == true -> 2
+            intent?.getBooleanExtra(SecurityNotificationDispatcher.EXTRA_NAVIGATE_TO_SECURITY, false) == true -> 1
+            else -> 0
+        }
+    }
+    var selectedTab by remember { mutableIntStateOf(initialTab) }
 
     val wifiState by viewModel.wifiState.collectAsState()
     val discoveredDevices by viewModel.discoveredDevices.collectAsState()
@@ -110,6 +132,11 @@ fun SentinelApp(viewModel: MainViewModel) {
     val unauthorizedHostCount = discoveredDevices.count { !it.isAuthorized && !it.isSelf && !it.isGateway }
     val btThreatCount = btDevices.count { it.isZeroToleranceFlagged && !it.isQuarantined }
     val totalThreatCount = unauthorizedHostCount + btThreatCount + (if (activeGatewayAlert != null) 1 else 0)
+
+    val scannedApps by viewModel.scannedApps.collectAsState()
+    val antivirusThreatCount = scannedApps.count {
+        it.riskLevel == AppRiskLevel.CRITICAL || it.riskLevel == AppRiskLevel.HIGH_RISK || it.riskLevel == AppRiskLevel.SUSPICIOUS
+    }
 
     // Runtime Permission Request for Wi-Fi and Bluetooth scanning
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -140,36 +167,48 @@ fun SentinelApp(viewModel: MainViewModel) {
         }
     }
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = CyberSurface,
-        topBar = {
-            SentinelTopBar(
-                ssid = wifiState.ssid,
-                unauthorizedCount = totalThreatCount
-            )
-        },
-        bottomBar = {
-            SentinelBottomNav(
-                selectedTab = selectedTab,
-                unauthorizedCount = totalThreatCount,
-                onTabSelect = { selectedTab = it }
-            )
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-        ) {
-            when (selectedTab) {
-                0 -> SignalScreen(
-                    viewModel = viewModel,
-                    onNavigateToSecurity = { selectedTab = 1 }
+    var showWorkspaceHub by remember { mutableStateOf(false) }
+
+    if (showWorkspaceHub) {
+        WorkspaceClusterScreen(
+            viewModel = viewModel,
+            onBack = { showWorkspaceHub = false }
+        )
+    } else {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            containerColor = CyberSurface,
+            topBar = {
+                SentinelTopBar(
+                    ssid = wifiState.ssid,
+                    unauthorizedCount = totalThreatCount,
+                    onOpenWorkspaceHub = { showWorkspaceHub = true }
                 )
-                1 -> SecurityScreen(viewModel = viewModel)
-                2 -> AiAdvisorScreen(viewModel = viewModel)
-                3 -> ChannelRadarScreen(viewModel = viewModel)
+            },
+            bottomBar = {
+                SentinelBottomNav(
+                    selectedTab = selectedTab,
+                    unauthorizedCount = totalThreatCount,
+                    antivirusThreatCount = antivirusThreatCount,
+                    onTabSelect = { selectedTab = it }
+                )
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                when (selectedTab) {
+                    0 -> SignalScreen(
+                        viewModel = viewModel,
+                        onNavigateToSecurity = { selectedTab = 1 }
+                    )
+                    1 -> SecurityScreen(viewModel = viewModel)
+                    2 -> AntivirusCleanerScreen(viewModel = viewModel)
+                    3 -> AiAdvisorScreen(viewModel = viewModel)
+                    4 -> ChannelRadarScreen(viewModel = viewModel)
+                }
             }
         }
     }
@@ -178,7 +217,8 @@ fun SentinelApp(viewModel: MainViewModel) {
 @Composable
 fun SentinelTopBar(
     ssid: String,
-    unauthorizedCount: Int
+    unauthorizedCount: Int,
+    onOpenWorkspaceHub: () -> Unit
 ) {
     val isThreat = unauthorizedCount > 0
     val statusColor = if (isThreat) CyberRed else CyberGreen
@@ -247,28 +287,59 @@ fun SentinelTopBar(
                 }
             }
 
-            // Live Network Health Status Pill
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (isThreat) AlertRedGlow else CyberSurfaceElevated)
-                    .border(1.dp, if (isThreat) CyberRed else CyberBorder, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(statusColor)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = if (isThreat) "INTRUDER" else "SECURE",
-                        color = statusColor,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 11.sp
-                    )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // Opifex Workspaces & Pergamus Clusters Button
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(CyberCyan.copy(alpha = 0.15f))
+                        .border(1.dp, CyberCyan.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
+                        .clickable { onOpenWorkspaceHub() }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                        .testTag("btn_top_workspace_hub")
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Hub,
+                            contentDescription = "Workspaces & Pergamus Clusters",
+                            tint = CyberCyan,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Opifex",
+                            color = CyberCyan,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // Live Network Health Status Pill
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (isThreat) AlertRedGlow else CyberSurfaceElevated)
+                        .border(1.dp, if (isThreat) CyberRed else CyberBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(statusColor)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isThreat) "INTRUDER" else "SECURE",
+                            color = statusColor,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp
+                        )
+                    }
                 }
             }
         }
@@ -279,6 +350,7 @@ fun SentinelTopBar(
 fun SentinelBottomNav(
     selectedTab: Int,
     unauthorizedCount: Int,
+    antivirusThreatCount: Int = 0,
     onTabSelect: (Int) -> Unit
 ) {
     NavigationBar(
@@ -299,7 +371,7 @@ fun SentinelBottomNav(
                     modifier = Modifier.size(22.dp)
                 )
             },
-            label = { Text("Signal", fontSize = 11.sp) },
+            label = { Text("Signal", fontSize = 10.sp) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = CyberSurface,
                 selectedTextColor = CyberCyan,
@@ -333,7 +405,7 @@ fun SentinelBottomNav(
                     )
                 }
             },
-            label = { Text("Security", fontSize = 11.sp) },
+            label = { Text("Security", fontSize = 10.sp) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = CyberSurface,
                 selectedTextColor = if (unauthorizedCount > 0) CyberRed else CyberCyan,
@@ -348,13 +420,47 @@ fun SentinelBottomNav(
             selected = selectedTab == 2,
             onClick = { onTabSelect(2) },
             icon = {
+                BadgedBox(
+                    badge = {
+                        if (antivirusThreatCount > 0) {
+                            Badge(
+                                containerColor = CyberRed,
+                                contentColor = TextPrimary
+                            ) {
+                                Text("$antivirusThreatCount")
+                            }
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CleaningServices,
+                        contentDescription = "Antivirus & Cleaner",
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+            },
+            label = { Text("Cleaner", fontSize = 10.sp) },
+            colors = NavigationBarItemDefaults.colors(
+                selectedIconColor = CyberSurface,
+                selectedTextColor = if (antivirusThreatCount > 0) CyberRed else CyberCyan,
+                indicatorColor = if (antivirusThreatCount > 0) CyberRed else CyberCyan,
+                unselectedIconColor = TextSecondary,
+                unselectedTextColor = TextMuted
+            ),
+            modifier = Modifier.testTag("nav_cleaner_tab")
+        )
+
+        NavigationBarItem(
+            selected = selectedTab == 3,
+            onClick = { onTabSelect(3) },
+            icon = {
                 Icon(
                     imageVector = Icons.Default.AutoAwesome,
                     contentDescription = "AI Advisor",
                     modifier = Modifier.size(22.dp)
                 )
             },
-            label = { Text("AI Advisor", fontSize = 11.sp) },
+            label = { Text("Advisor", fontSize = 10.sp) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = CyberSurface,
                 selectedTextColor = CyberCyan,
@@ -366,8 +472,8 @@ fun SentinelBottomNav(
         )
 
         NavigationBarItem(
-            selected = selectedTab == 3,
-            onClick = { onTabSelect(3) },
+            selected = selectedTab == 4,
+            onClick = { onTabSelect(4) },
             icon = {
                 Icon(
                     imageVector = Icons.Default.Tune,
@@ -375,7 +481,7 @@ fun SentinelBottomNav(
                     modifier = Modifier.size(22.dp)
                 )
             },
-            label = { Text("Channels", fontSize = 11.sp) },
+            label = { Text("Channels", fontSize = 10.sp) },
             colors = NavigationBarItemDefaults.colors(
                 selectedIconColor = CyberSurface,
                 selectedTextColor = CyberCyan,

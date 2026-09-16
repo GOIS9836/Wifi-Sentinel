@@ -246,4 +246,82 @@ class IdempotencyAndWiFiManagerTest {
         assertEquals("Ayecom Technology", wifiManager.resolveVendor("00:1A:2B:40:12:00"))
         assertEquals("Apple Inc.", wifiManager.resolveVendor("F0:99:BF:40:12:00"))
     }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun testPersistentForegroundScannerUnauthorizedPushAlertsAndIdempotency() = runTest {
+        val service = com.example.service.NetworkScannerForegroundService()
+        // Grant notification permission in shadow
+        org.robolectric.Shadows.shadowOf(application).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+
+        // Reset idempotency cache prior to test
+        com.example.service.NetworkScannerForegroundService.resetIdempotencyCache()
+        assertEquals(0, com.example.service.NetworkScannerForegroundService.getAlertedDevicesCount())
+
+        val unauthorizedDevice = DiscoveredDevice(
+            ip = "192.168.1.187",
+            macAddress = "CC:DD:EE:11:22:33",
+            vendor = "Rogue Camera",
+            isAuthorized = false,
+            isSelf = false,
+            isGateway = false
+        )
+
+        // Pass 1: Device discovered on subnet
+        val pass1NewAlerts = service.performSubnetAudit(
+            isManualTrigger = true,
+            injectedDevices = listOf(unauthorizedDevice),
+            contextOverride = application
+        )
+        advanceUntilIdle()
+
+        assertEquals("First scan must identify the unauthorized device", 1, pass1NewAlerts.size)
+        assertTrue("Device must be registered in the alerted cache",
+            com.example.service.NetworkScannerForegroundService.isDeviceAlerted("CC:DD:EE:11:22:33"))
+        assertEquals(1, com.example.service.NetworkScannerForegroundService.getAlertedDevicesCount())
+
+        // Verify push alert was dispatched via NotificationManager
+        val notificationManager = application.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val activeNotifs = notificationManager.activeNotifications
+        assertTrue("Active notifications must include the unauthorized device alert",
+            activeNotifs.any { it.id == "CC:DD:EE:11:22:33".hashCode() })
+
+        val alertNotif = activeNotifs.first { it.id == "CC:DD:EE:11:22:33".hashCode() }.notification
+        assertNotNull(alertNotif)
+        assertEquals(com.example.service.SecurityNotificationDispatcher.CHANNEL_ID, alertNotif.channelId)
+
+        // Pass 2: Subsequent scan with the SAME unauthorized device on subnet (Idempotency Test)
+        val pass2NewAlerts = service.performSubnetAudit(
+            isManualTrigger = false,
+            injectedDevices = listOf(unauthorizedDevice),
+            contextOverride = application
+        )
+        advanceUntilIdle()
+
+        assertEquals("Subsequent scan with identical unauthorized host must NOT produce new alerts (Strict Idempotency)",
+            0, pass2NewAlerts.size)
+        assertEquals("Alerted count must remain exactly 1 without duplication",
+            1, com.example.service.NetworkScannerForegroundService.getAlertedDevicesCount())
+
+        // Pass 3: Another scan sweep
+        val pass3NewAlerts = service.performSubnetAudit(
+            isManualTrigger = false,
+            injectedDevices = listOf(unauthorizedDevice),
+            contextOverride = application
+        )
+        advanceUntilIdle()
+        assertEquals("Third scan must also remain strictly idempotent", 0, pass3NewAlerts.size)
+    }
+
+    @Test
+    fun testForegroundScannerServiceStartStopIdempotency() {
+        // Starting the service multiple times must not crash or cause inconsistent state
+        com.example.service.NetworkScannerForegroundService.start(application)
+        com.example.service.NetworkScannerForegroundService.start(application)
+        com.example.service.NetworkScannerForegroundService.start(application)
+
+        // Stopping the service multiple times must be idempotent
+        com.example.service.NetworkScannerForegroundService.stop(application)
+        com.example.service.NetworkScannerForegroundService.stop(application)
+    }
 }
