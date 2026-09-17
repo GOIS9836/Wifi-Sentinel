@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -85,5 +86,44 @@ interface SecurityAlertDao {
     suspend fun acknowledgeAll()
 
     @Query("DELETE FROM security_alerts")
+    suspend fun clearAll()
+}
+
+@Dao
+interface TrustedGatewayDao {
+    @Query("SELECT * FROM trusted_gateways ORDER BY isPrimary DESC, lastSeenTimestamp DESC")
+    fun getAllTrustedGateways(): Flow<List<TrustedGateway>>
+
+    @Query("SELECT * FROM trusted_gateways WHERE gatewayIp = :ip LIMIT 1")
+    suspend fun getGatewayByIp(ip: String): TrustedGateway?
+
+    @Query("SELECT * FROM trusted_gateways WHERE isPrimary = 1 LIMIT 1")
+    fun getPrimaryGateway(): Flow<TrustedGateway?>
+
+    @Query("SELECT * FROM trusted_gateways WHERE isPrimary = 1 LIMIT 1")
+    suspend fun getPrimaryGatewaySync(): TrustedGateway?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertOrUpdate(gateway: TrustedGateway)
+
+    @Query("UPDATE trusted_gateways SET isPrimary = 0")
+    suspend fun clearPrimaryFlags()
+
+    @Transaction
+    suspend fun setAsPrimary(gatewayIp: String) {
+        clearPrimaryFlags()
+        setPrimaryFlag(gatewayIp, true)
+    }
+
+    @Query("UPDATE trusted_gateways SET isPrimary = :isPrimary WHERE gatewayIp = :gatewayIp")
+    suspend fun setPrimaryFlag(gatewayIp: String, isPrimary: Boolean)
+
+    @Query("UPDATE trusted_gateways SET lastSeenTimestamp = :timestamp WHERE gatewayIp = :gatewayIp")
+    suspend fun updateLastSeen(gatewayIp: String, timestamp: Long = System.currentTimeMillis())
+
+    @Query("DELETE FROM trusted_gateways WHERE gatewayIp = :gatewayIp")
+    suspend fun deleteGateway(gatewayIp: String)
+
+    @Query("DELETE FROM trusted_gateways")
     suspend fun clearAll()
 }

@@ -4,6 +4,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.NetworkDeviceEntity
 import com.example.data.local.SecurityAlertEntity
 import com.example.data.local.SignalLogEntity
+import com.example.data.local.TrustedGateway
 import com.example.data.model.AiOptimizationReport
 import com.example.data.model.BtDeviceType
 import com.example.data.model.BtPerimeterDevice
@@ -36,6 +37,8 @@ class WifiRepository(
     val signalLogsFlow: Flow<List<SignalLogEntity>> = database.signalLogDao().getAllSignalLogs()
     val securityAlertsFlow: Flow<List<SecurityAlertEntity>> = database.securityAlertDao().getAllAlerts()
     val unacknowledgedAlertsCount: Flow<Int> = database.securityAlertDao().getUnacknowledgedCount()
+    val trustedGatewaysFlow: Flow<List<TrustedGateway>> = database.trustedGatewayDao().getAllTrustedGateways()
+    val primaryTrustedGatewayFlow: Flow<TrustedGateway?> = database.trustedGatewayDao().getPrimaryGateway()
 
     val perimeterBtDevices: StateFlow<List<BtPerimeterDevice>> = btSentryScanner.perimeterDevices
     val isBtScanning: StateFlow<Boolean> = btSentryScanner.isScanning
@@ -374,5 +377,29 @@ class WifiRepository(
 
     suspend fun getRecentSecurityAlertsList(limit: Int = 20): List<SecurityAlertEntity> {
         return database.securityAlertDao().getRecentAlertsList(limit)
+    }
+
+    suspend fun saveTrustedGateway(gateway: TrustedGateway) {
+        database.trustedGatewayDao().insertOrUpdate(gateway)
+    }
+
+    suspend fun setPrimaryTrustedGateway(gatewayIp: String) {
+        database.trustedGatewayDao().setAsPrimary(gatewayIp)
+    }
+
+    suspend fun deleteTrustedGateway(gatewayIp: String) {
+        database.trustedGatewayDao().deleteGateway(gatewayIp)
+    }
+
+    suspend fun getTrustedGateway(gatewayIp: String): TrustedGateway? {
+        return database.trustedGatewayDao().getGatewayByIp(gatewayIp)
+    }
+
+    suspend fun updateGatewayLastSeen(gatewayIp: String) {
+        database.trustedGatewayDao().updateLastSeen(gatewayIp)
+    }
+
+    suspend fun getAllTrustedGatewaysList(): List<TrustedGateway> {
+        return database.trustedGatewayDao().getAllTrustedGateways().first()
     }
 }

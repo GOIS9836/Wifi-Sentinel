@@ -9,15 +9,17 @@ import androidx.room.RoomDatabase
     entities = [
         NetworkDeviceEntity::class,
         SignalLogEntity::class,
-        SecurityAlertEntity::class
+        SecurityAlertEntity::class,
+        TrustedGateway::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun networkDeviceDao(): NetworkDeviceDao
     abstract fun signalLogDao(): SignalLogDao
     abstract fun securityAlertDao(): SecurityAlertDao
+    abstract fun trustedGatewayDao(): TrustedGatewayDao
 
     companion object {
         @Volatile

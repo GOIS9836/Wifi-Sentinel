@@ -25,7 +25,8 @@ class GreetingScreenshotTest {
       MyApplicationTheme {
         SentinelTopBar(
           ssid = "CyberSentinel_5G",
-          unauthorizedCount = 0
+          unauthorizedCount = 0,
+          onOpenWorkspaceHub = {}
         )
       }
     }

@@ -7,6 +7,10 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.example.security.GatewayDiagnosticsResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -25,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -32,14 +37,17 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiTethering
+import com.example.data.local.TrustedGateway
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,7 +65,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import com.example.security.GatewayAlert
+import com.example.security.SecurityDashboardUiState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -121,10 +133,19 @@ fun SecurityDashboardScreen(
     val selectedGatewayFilter by viewModel.selectedGatewayFilter.collectAsStateWithLifecycle()
     val wifiState by viewModel.wifiState.collectAsStateWithLifecycle()
     val isShieldActive by viewModel.isRealTimeShieldActive.collectAsStateWithLifecycle()
+    val guardUiState by viewModel.guardUiState.collectAsStateWithLifecycle()
+    val trustedGateways by viewModel.trustedGateways.collectAsStateWithLifecycle()
+    val primaryTrustedGateway by viewModel.primaryTrustedGateway.collectAsStateWithLifecycle()
+    val gatewayDiagnostics by viewModel.gatewayDiagnostics.collectAsStateWithLifecycle()
+    val isDiagnosingGateway by viewModel.isDiagnosingGateway.collectAsStateWithLifecycle()
 
     var showAddGatewayDialog by remember { mutableStateOf(false) }
+    var showAddTrustedGatewayDialog by remember { mutableStateOf(false) }
     var showSimulateUnethicalMenu by remember { mutableStateOf(false) }
     var showQuarantineBreakdownDialog by remember { mutableStateOf(false) }
+    var showExportConfigDialog by remember { mutableStateOf(false) }
+    var showImportConfigDialog by remember { mutableStateOf(false) }
+    var exportedConfigJson by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier = modifier
@@ -134,6 +155,22 @@ fun SecurityDashboardScreen(
         contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0. High-Priority Gateway Anomaly Alert (Compliant Self-Defense)
+        guardUiState.activeAlert?.let { alert ->
+            item {
+                CompliantGatewayAnomalyAlertBanner(
+                    alert = alert,
+                    onTriggerLockdown = { viewModel.triggerSafeLockdown() },
+                    onTrustNewGateway = { viewModel.trustAndAddDetectedGateway(it, "Trusted Discovered Node", false) },
+                    onSetPrimary = {
+                        viewModel.setPrimaryTrustedGateway(it)
+                        viewModel.dismissGuardGatewayAlert()
+                    },
+                    onDismiss = { viewModel.dismissGuardGatewayAlert() }
+                )
+            }
+        }
+
         // 1. Dashboard Header Banner
         item {
             DashboardHeroHeader(
@@ -156,6 +193,17 @@ fun SecurityDashboardScreen(
                 onFrequencyChange = { viewModel.setScanFrequency(it) },
                 onRefreshRisk = { viewModel.refreshNetworkRiskScore() },
                 onInspectQuarantine = { showQuarantineBreakdownDialog = true }
+            )
+        }
+
+        // 2.5 Compliant Self-Defense Engine & Privacy-Safe Guard
+        item {
+            CompliantSelfDefenseGuardCard(
+                guardState = guardUiState,
+                onTriggerLockdown = { viewModel.triggerSafeLockdown() },
+                onReleaseLockdown = { viewModel.releaseSafeLockdown() },
+                onToggleFpFilter = { viewModel.setFpFilterEnabled(it) },
+                onSimulateAnomaly = { viewModel.simulateGatewayAnomalyForTesting() }
             )
         }
 
@@ -223,6 +271,25 @@ fun SecurityDashboardScreen(
             }
         }
 
+        // 5.5 Room-Persisted Trusted Gateways (trusted_gateways table)
+        item {
+            TrustedGatewaysPersistenceCard(
+                trustedGateways = trustedGateways,
+                primaryGateway = primaryTrustedGateway,
+                diagnosticsResult = gatewayDiagnostics,
+                isDiagnosing = isDiagnosingGateway,
+                onRunDiagnostics = { viewModel.runGatewayDiagnostics() },
+                onExportConfig = {
+                    exportedConfigJson = viewModel.exportSentinelSecurityConfigJson()
+                    showExportConfigDialog = true
+                },
+                onImportConfig = { showImportConfigDialog = true },
+                onAddGateway = { showAddTrustedGatewayDialog = true },
+                onSetPrimary = { viewModel.setPrimaryTrustedGateway(it) },
+                onDelete = { viewModel.removeTrustedGateway(it) }
+            )
+        }
+
         // Bottom Navigation Shortcuts
         item {
             DashboardShortcutsRow(
@@ -243,6 +310,16 @@ fun SecurityDashboardScreen(
         )
     }
 
+    if (showAddTrustedGatewayDialog) {
+        AddTrustedGatewayDialog(
+            onDismiss = { showAddTrustedGatewayDialog = false },
+            onAdd = { ip, bssid, ssid, subnetMask, label, isPrimary ->
+                viewModel.addTrustedGateway(ip, bssid, ssid, subnetMask, label, isPrimary)
+                showAddTrustedGatewayDialog = false
+            }
+        )
+    }
+
     if (showQuarantineBreakdownDialog) {
         QuarantinedDevicesBreakdownDialog(
             quarantinedCount = quarantinedCount,
@@ -259,6 +336,23 @@ fun SecurityDashboardScreen(
             onSelect = { type ->
                 viewModel.simulateUnethicalThreat(type)
                 showSimulateUnethicalMenu = false
+            }
+        )
+    }
+
+    if (showExportConfigDialog) {
+        ExportConfigDialog(
+            jsonConfig = exportedConfigJson,
+            onDismiss = { showExportConfigDialog = false }
+        )
+    }
+
+    if (showImportConfigDialog) {
+        ImportConfigDialog(
+            onDismiss = { showImportConfigDialog = false },
+            onImport = { json ->
+                viewModel.importSentinelSecurityConfigJson(json)
+                showImportConfigDialog = false
             }
         )
     }
@@ -1698,6 +1792,994 @@ private fun SimulateUnethicalDialog(
             }
         },
         confirmButton = {},
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
+        },
+        containerColor = CyberSurfaceElevated
+    )
+}
+
+@Composable
+private fun CompliantGatewayAnomalyAlertBanner(
+    alert: GatewayAlert,
+    onTriggerLockdown: () -> Unit,
+    onTrustNewGateway: (String) -> Unit,
+    onSetPrimary: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val isKnown = alert.isKnownInDatabase
+    val borderColor = if (isKnown) CyberAmber else CyberRed
+    val bgColor = if (isKnown) CyberAmber.copy(alpha = 0.16f) else CyberRed.copy(alpha = 0.18f)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.5.dp, borderColor, RoundedCornerShape(14.dp))
+            .testTag("banner_gateway_anomaly_alert"),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isKnown) Icons.Default.Info else Icons.Default.Warning,
+                        contentDescription = "Alert",
+                        tint = borderColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = if (isKnown) "RECOGNIZED MESH NODE ROAMING" else "CRITICAL ROGUE GATEWAY ANOMALY",
+                        color = borderColor,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = if (isKnown) {
+                    "Device transitioned from ${alert.oldGateway} to registered node '${alert.matchedLabel}' (${alert.newGateway}). Would you like to lock this node as your active primary baseline?"
+                } else {
+                    "Default Gateway shifted unexpectedly from ${alert.oldGateway} to unrecognized ${alert.newGateway}. This matches ARP cache poisoning, gateway hijacking, or a rogue AP impersonation vector."
+                },
+                color = TextPrimary,
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (isKnown) {
+                    Button(
+                        onClick = { onSetPrimary(alert.newGateway) },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberGreen),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .testTag("btn_banner_set_primary_mesh")
+                    ) {
+                        Icon(imageVector = Icons.Default.Star, contentDescription = null, modifier = Modifier.size(14.dp), tint = CyberBackground)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Set as Primary Baseline", color = CyberBackground, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        modifier = Modifier.weight(0.8f)
+                    ) {
+                        Text("Keep Baseline", fontSize = 11.sp)
+                    }
+                } else {
+                    Button(
+                        onClick = onTriggerLockdown,
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberRed),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .testTag("btn_banner_lockdown")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Safe Lockdown", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = { onTrustNewGateway(alert.newGateway) },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberCyan),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("btn_banner_trust_gateway")
+                    ) {
+                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(14.dp), tint = CyberBackground)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Trust Node", color = CyberBackground, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        border = BorderStroke(1.dp, CyberBorder)
+                    ) {
+                        Text("Dismiss", fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompliantSelfDefenseGuardCard(
+    guardState: SecurityDashboardUiState,
+    onTriggerLockdown: () -> Unit,
+    onReleaseLockdown: () -> Unit,
+    onToggleFpFilter: (Boolean) -> Unit,
+    onSimulateAnomaly: () -> Unit
+) {
+    val isLockdown = guardState.isLockdownActive
+    val borderColor = if (isLockdown) CyberRed else CyberCyan.copy(alpha = 0.5f)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .testTag("card_compliant_self_defense"),
+        colors = CardDefaults.cardColors(containerColor = CyberSurfaceElevated),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isLockdown) CyberRed.copy(alpha = 0.2f) else CyberCyan.copy(alpha = 0.15f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isLockdown) Icons.Default.Lock else Icons.Default.Security,
+                            contentDescription = "Self Defense",
+                            tint = if (isLockdown) CyberRed else CyberCyan,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Compliant Self-Defense Engine",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                        Text(
+                            text = "NetworkGuardManager • Policy Safe",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
+
+                // Status Pill
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (isLockdown) CyberRed.copy(alpha = 0.2f) else CyberGreen.copy(alpha = 0.15f),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (isLockdown) CyberRed else CyberGreen
+                    )
+                ) {
+                    Text(
+                        text = if (isLockdown) "HOST ISOLATED" else "SYSTEM ARMED",
+                        color = if (isLockdown) CyberRed else CyberGreen,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            // Architecture details block
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(CyberSurface)
+                    .border(1.dp, CyberBorder.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Baseline Gateway:", color = TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = guardState.lockedGatewayBaseline ?: "192.168.1.1 (Monitoring)",
+                        color = CyberCyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Host Routing State:", color = TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = if (isLockdown) "Unbound (bindProcessToNetwork: null)" else "Connected & Monitored",
+                        color = if (isLockdown) CyberRed else CyberGreen,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Store Policy Guarantee:", color = TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = "100% Google Play Compliant (No Deauth/Injection)",
+                        color = CyberTeal,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Primary Action Button (Safe Lockdown)
+            if (!isLockdown) {
+                Button(
+                    onClick = onTriggerLockdown,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("btn_trigger_safe_lockdown"),
+                    colors = ButtonDefaults.buttonColors(containerColor = CyberRed.copy(alpha = 0.85f)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Execute Safe Lockdown (Self-Isolation)",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            } else {
+                Button(
+                    onClick = onReleaseLockdown,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("btn_release_safe_lockdown"),
+                    colors = ButtonDefaults.buttonColors(containerColor = CyberGreen),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = CyberSurface
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Release Lockdown & Restore Sockets",
+                        color = CyberSurface,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
+            }
+
+            // Secondary Controls: Simulate Anomaly
+            OutlinedButton(
+                onClick = onSimulateAnomaly,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("btn_simulate_gateway_shift"),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
+                border = ButtonDefaults.outlinedButtonBorder.copy(
+                    brush = Brush.horizontalGradient(listOf(CyberBorder, CyberCyan.copy(alpha = 0.6f)))
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = CyberCyan
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Simulate Gateway Anomaly (Test Isolation)", fontSize = 11.sp, color = CyberCyan)
+            }
+
+            // Divider
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(CyberBorder.copy(alpha = 0.4f))
+            )
+
+            // Privacy-Safe Corroborator (MacSanitizer)
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Privacy-Safe False-Positive Filter (MacSanitizer)",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp
+                        )
+                        Text(
+                            text = "Suppresses randomized MACs (IEEE 802 LAA) to prevent flagging benign personal devices.",
+                            color = TextMuted,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                    Switch(
+                        checked = guardState.fpFilterEnabled,
+                        onCheckedChange = onToggleFpFilter,
+                        modifier = Modifier.testTag("switch_fp_filter"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CyberCyan,
+                            checkedTrackColor = CyberCyan.copy(alpha = 0.3f),
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = CyberSurface
+                        )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Filtered Randomized MACs: ${guardState.fpFilteredCount}",
+                        color = CyberAmber,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "SHA-256 Hashed Audits: ${guardState.totalHashedAuditsCount}",
+                        color = CyberTeal,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrustedGatewaysPersistenceCard(
+    trustedGateways: List<TrustedGateway>,
+    primaryGateway: TrustedGateway?,
+    diagnosticsResult: GatewayDiagnosticsResult?,
+    isDiagnosing: Boolean,
+    onRunDiagnostics: () -> Unit,
+    onExportConfig: () -> Unit,
+    onImportConfig: () -> Unit,
+    onAddGateway: () -> Unit,
+    onSetPrimary: (String) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("trusted_gateways_persistence_card"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = CyberSurfaceElevated),
+        border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.35f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(32.dp)
+                            .background(CyberCyan.copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text("Trusted Gateways", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("Room DB • Anomaly Self-Defense", color = TextMuted, fontSize = 11.sp)
+                    }
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Button(
+                        onClick = onRunDiagnostics,
+                        enabled = !isDiagnosing,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag("btn_run_gateway_diagnostics"),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberCyan.copy(alpha = 0.18f), contentColor = CyberCyan),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(if (isDiagnosing) "Probing..." else "Probe", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    Button(
+                        onClick = onAddGateway,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .testTag("btn_open_add_trusted_gw"),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberCyan, contentColor = CyberBackground),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("Add Node", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+
+            if (primaryGateway != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(CyberGreen.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Star, contentDescription = null, tint = CyberGreen, modifier = Modifier.size(14.dp))
+                    Text(
+                        text = "Active Baseline: ${primaryGateway.label} (${primaryGateway.gatewayIp})",
+                        color = CyberGreen,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            // Diagnostic Progress Indicator
+            if (isDiagnosing) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = CyberBackground.copy(alpha = 0.6f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Diagnosing Socket RTT, DNS & Admin Ports...", color = CyberCyan, fontSize = 11.sp)
+                        }
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().height(4.dp),
+                            color = CyberCyan,
+                            trackColor = CyberBorder
+                        )
+                    }
+                }
+            }
+
+            // Diagnostics Result Panel
+            diagnosticsResult?.let { diag ->
+                val gradeColor = when {
+                    diag.healthGrade.startsWith("A") -> CyberGreen
+                    diag.healthGrade.startsWith("B") -> CyberCyan
+                    diag.healthGrade.startsWith("WARN") -> CyberAmber
+                    else -> CyberRed
+                }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("card_gateway_diagnostics_result"),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = CyberBackground.copy(alpha = 0.8f)),
+                    border = BorderStroke(1.dp, gradeColor.copy(alpha = 0.4f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = gradeColor, modifier = Modifier.size(14.dp))
+                                Text("Gateway Integrity Audit", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(gradeColor.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(diag.healthGrade, color = gradeColor, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text("RTT / Jitter", color = TextMuted, fontSize = 10.sp)
+                                Text("${diag.avgLatencyMs} ms (±${diag.jitterMs}ms)", color = CyberCyan, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                            }
+                            Column {
+                                Text("DNS Resolver", color = TextMuted, fontSize = 10.sp)
+                                Text(
+                                    if (diag.isDnsTampered) "TAMPERED (${diag.dnsServerIp})" else "Clean (${diag.dnsServerIp})",
+                                    color = if (diag.isDnsTampered) CyberRed else CyberGreen,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                            Column {
+                                Text("Admin Interface", color = TextMuted, fontSize = 10.sp)
+                                Text(
+                                    if (diag.hasEncryptedAdmin) "Port 443 (HTTPS)" else "Standard / Closed",
+                                    color = if (diag.hasEncryptedAdmin) CyberGreen else TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = diag.diagnosticSummary,
+                            color = TextSecondary,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            }
+
+            if (trustedGateways.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("No trusted gateways registered in Room database.", color = TextSecondary, fontSize = 12.sp)
+                }
+            } else {
+                trustedGateways.forEach { gw ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("trusted_gw_item_${gw.gatewayIp}"),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = CyberBackground.copy(alpha = 0.7f)),
+                        border = BorderStroke(
+                            1.dp,
+                            if (gw.isPrimary) CyberGreen.copy(alpha = 0.5f) else CyberBorder.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(gw.label, color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    if (gw.isPrimary) {
+                                        Box(
+                                            modifier = Modifier
+                                                .background(CyberGreen.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                        ) {
+                                            Text("PRIMARY", color = CyberGreen, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                                        }
+                                    }
+                                }
+                                Text(
+                                    text = "IP: ${gw.gatewayIp} • Subnet: ${gw.subnetMask}",
+                                    color = CyberCyan,
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                                Text(
+                                    text = "SSID: ${gw.ssid} • MAC (yechipangidzo): ${gw.bssid ?: "None/Auto"}",
+                                    color = TextSecondary,
+                                    fontSize = 10.sp
+                                )
+                            }
+
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (!gw.isPrimary) {
+                                    OutlinedButton(
+                                        onClick = { onSetPrimary(gw.gatewayIp) },
+                                        modifier = Modifier
+                                            .height(28.dp)
+                                            .testTag("btn_make_primary_${gw.gatewayIp}"),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberCyan)
+                                    ) {
+                                        Text("Set Primary", fontSize = 10.sp)
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { onDelete(gw.gatewayIp) },
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .testTag("btn_delete_trusted_gw_${gw.gatewayIp}")
+                                ) {
+                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete", tint = CyberRed.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Export / Import Backup Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onExportConfig,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .testTag("btn_export_sentinel_json"),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberCyan),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    border = BorderStroke(1.dp, CyberCyan.copy(alpha = 0.4f))
+                ) {
+                    Text("Export Config JSON", fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+
+                OutlinedButton(
+                    onClick = onImportConfig,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .testTag("btn_import_sentinel_json"),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberGreen),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    border = BorderStroke(1.dp, CyberGreen.copy(alpha = 0.4f))
+                ) {
+                    Text("Import Backup JSON", fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddTrustedGatewayDialog(
+    onDismiss: () -> Unit,
+    onAdd: (ip: String, bssid: String?, ssid: String, subnetMask: String, label: String, isPrimary: Boolean) -> Unit
+) {
+    var ip by remember { mutableStateOf("192.168.1.1") }
+    var bssid by remember { mutableStateOf("00:11:22:33:44:55") }
+    var ssid by remember { mutableStateOf("Office_Mesh_Node1") }
+    var subnetMask by remember { mutableStateOf("255.255.255.0") }
+    var label by remember { mutableStateOf("AP Upstairs") }
+    var isPrimary by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.Lock, contentDescription = null, tint = CyberCyan)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Add Trusted Gateway (Room)",
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it },
+                    label = { Text("Gateway IP (Primary Key)") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = CyberBorder
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("add_trusted_gw_ip")
+                )
+                OutlinedTextField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = { Text("Label (e.g. Main Router Lounge)") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = CyberBorder
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("add_trusted_gw_label")
+                )
+                OutlinedTextField(
+                    value = ssid,
+                    onValueChange = { ssid = it },
+                    label = { Text("SSID / Network Name") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = CyberBorder
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("add_trusted_gw_ssid")
+                )
+                OutlinedTextField(
+                    value = bssid,
+                    onValueChange = { bssid = it },
+                    label = { Text("BSSID / MAC yechipangidzo") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = CyberBorder
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("add_trusted_gw_bssid")
+                )
+                OutlinedTextField(
+                    value = subnetMask,
+                    onValueChange = { subnetMask = it },
+                    label = { Text("Subnet Mask") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberCyan,
+                        unfocusedBorderColor = CyberBorder
+                    ),
+                    modifier = Modifier.fillMaxWidth().testTag("add_trusted_gw_subnet")
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Set as Primary Baseline", color = TextSecondary, fontSize = 12.sp)
+                    Switch(
+                        checked = isPrimary,
+                        onCheckedChange = { isPrimary = it },
+                        modifier = Modifier.testTag("switch_trusted_gw_is_primary"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CyberCyan,
+                            checkedTrackColor = CyberCyan.copy(alpha = 0.3f)
+                        )
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onAdd(ip, bssid.ifBlank { null }, ssid, subnetMask, label, isPrimary)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CyberCyan, contentColor = CyberBackground),
+                modifier = Modifier.testTag("btn_confirm_add_trusted_gateway")
+            ) {
+                Text("Save to Room DB", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Cancel", color = TextSecondary)
+            }
+        },
+        containerColor = CyberSurfaceElevated
+    )
+}
+
+@Composable
+private fun ExportConfigDialog(
+    jsonConfig: String,
+    onDismiss: () -> Unit
+) {
+    val clipboardManager = LocalClipboardManager.current
+    var isCopied by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = CyberCyan)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Export Sentinel Configuration", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "This JSON configuration bundles your Room-persisted trusted gateways and whitelisted MAC identifiers.",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = CyberBackground),
+                    border = BorderStroke(1.dp, CyberBorder)
+                ) {
+                    Text(
+                        text = jsonConfig,
+                        color = CyberCyan,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(8.dp)
+                            .verticalScroll(rememberScrollState())
+                    )
+                }
+                if (isCopied) {
+                    Text("✓ Configuration copied to clipboard!", color = CyberGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    clipboardManager.setText(AnnotatedString(jsonConfig))
+                    isCopied = true
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CyberCyan, contentColor = CyberBackground)
+            ) {
+                Text("Copy JSON", fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text("Close", color = TextSecondary)
+            }
+        },
+        containerColor = CyberSurfaceElevated
+    )
+}
+
+@Composable
+private fun ImportConfigDialog(
+    onDismiss: () -> Unit,
+    onImport: (String) -> Unit
+) {
+    var jsonText by remember { mutableStateOf("") }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = CyberGreen)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Import Sentinel Configuration", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Paste a previously exported Sentinel JSON backup below to restore trusted gateways and MAC rules into Room DB:",
+                    color = TextSecondary,
+                    fontSize = 11.sp
+                )
+                OutlinedTextField(
+                    value = jsonText,
+                    onValueChange = {
+                        jsonText = it
+                        errorMessage = null
+                    },
+                    placeholder = { Text("{\n  \"version\": \"Sentinel-4.2\",\n  \"trustedGateways\": [...] \n}") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary,
+                        focusedBorderColor = CyberGreen,
+                        unfocusedBorderColor = CyberBorder
+                    )
+                )
+                errorMessage?.let {
+                    Text(it, color = CyberRed, fontSize = 11.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (jsonText.isBlank()) {
+                        errorMessage = "Please enter or paste valid JSON."
+                    } else {
+                        onImport(jsonText)
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CyberGreen, contentColor = CyberBackground)
+            ) {
+                Text("Restore Config", fontWeight = FontWeight.Bold)
+            }
+        },
         dismissButton = {
             OutlinedButton(onClick = onDismiss) {
                 Text("Cancel", color = TextSecondary)

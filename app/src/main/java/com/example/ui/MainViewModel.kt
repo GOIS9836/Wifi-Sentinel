@@ -82,11 +82,38 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Collections
 import kotlin.random.Random
+import com.example.security.NetworkGuardManager
+import com.example.security.GuardEventListener
+import com.example.security.MacSanitizer
+import com.example.security.GatewayAlert
+import com.example.security.SecurityDashboardUiState
+import com.example.security.GatewayDiagnosticsManager
+import com.example.security.GatewayDiagnosticsResult
+import com.example.data.local.TrustedGateway
+import org.json.JSONArray
+import org.json.JSONObject
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+class MainViewModel(application: Application) : AndroidViewModel(application), GuardEventListener {
+
+    // Compliant Self-Defense Engine & Privacy-Safe MAC Corroborator
+    private val guardManager: NetworkGuardManager = NetworkGuardManager(application, this)
+    private val diagnosticsManager = GatewayDiagnosticsManager(application)
+    private val _guardUiState = MutableStateFlow(SecurityDashboardUiState(fpFilterEnabled = true))
+    val guardUiState: StateFlow<SecurityDashboardUiState> = _guardUiState.asStateFlow()
+    val isCompliantLockdownActive: StateFlow<Boolean> = combine(_guardUiState) { it[0].isLockdownActive }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    val activeGuardGatewayAlert: StateFlow<GatewayAlert?> = combine(_guardUiState) { it[0].activeAlert }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val fpFilteredCount: StateFlow<Int> = combine(_guardUiState) { it[0].fpFilteredCount }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    val fpFilterEnabled: StateFlow<Boolean> = combine(_guardUiState) { it[0].fpFilterEnabled }.stateIn(viewModelScope, SharingStarted.Eagerly, true)
+    val totalHashedAuditsCount: StateFlow<Int> = combine(_guardUiState) { it[0].totalHashedAuditsCount }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+
+    private val _gatewayDiagnostics = MutableStateFlow<GatewayDiagnosticsResult?>(null)
+    val gatewayDiagnostics: StateFlow<GatewayDiagnosticsResult?> = _gatewayDiagnostics.asStateFlow()
+    private val _isDiagnosingGateway = MutableStateFlow(false)
+    val isDiagnosingGateway: StateFlow<Boolean> = _isDiagnosingGateway.asStateFlow()
 
     private val repository: WifiRepository
     private val wifiManager: WiFiManager = WiFiManager(application)
@@ -331,6 +358,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     lateinit var totalQuarantinedCount: StateFlow<Int>
+    lateinit var trustedGateways: StateFlow<List<TrustedGateway>>
+    lateinit var primaryTrustedGateway: StateFlow<TrustedGateway?>
 
     private val alertedUnknownMacs = Collections.synchronizedSet(mutableSetOf<String>())
 
@@ -338,6 +367,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var shieldWatcherJob: Job? = null
 
     init {
+        guardManager.startMonitoring()
         val database = AppDatabase.getInstance(application)
         val scannerService = WifiScannerService(application)
         val btScannerService = BluetoothSentryScanner(application)
@@ -362,6 +392,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         whitelistedCount = repository.whitelistedCountFlow.stateIn(
             viewModelScope, SharingStarted.Eagerly, 0
         )
+        trustedGateways = repository.trustedGatewaysFlow.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+        )
+        primaryTrustedGateway = repository.primaryTrustedGatewayFlow.stateIn(
+            viewModelScope, SharingStarted.WhileSubscribed(5000), null
+        )
+
+        viewModelScope.launch {
+            try {
+                val existing = repository.trustedGatewaysFlow.first()
+                if (existing.isEmpty()) {
+                    val currentGw = _wifiState.value.gatewayIp.ifBlank { "192.168.1.1" }
+                    val currentSsid = _wifiState.value.ssid.ifBlank { "Office_Mesh_Node1" }
+                    val currentBssid = _wifiState.value.bssid.ifBlank { "00:11:22:33:44:55" }
+                    repository.saveTrustedGateway(
+                        TrustedGateway(
+                            gatewayIp = currentGw,
+                            bssid = currentBssid,
+                            ssid = currentSsid,
+                            subnetMask = "255.255.255.0",
+                            label = "Main Router (Lounge)",
+                            isPrimary = true
+                        )
+                    )
+                    repository.saveTrustedGateway(
+                        TrustedGateway(
+                            gatewayIp = "192.168.1.2",
+                            bssid = "00:11:22:33:44:56",
+                            ssid = "${currentSsid}_Satellite",
+                            subnetMask = "255.255.255.0",
+                            label = "AP Upstairs",
+                            isPrimary = false
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                // Non-blocking initialization fallback
+            }
+        }
 
         totalQuarantinedCount = combine(
             _discoveredDevices,
@@ -506,14 +575,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 !dev.isAuthorized && !dev.isSelf && !dev.isGateway && !isSuppressed
                             }
 
-                            if (shouldBlock) {
+                            val isFilteredBySanitizer = filterIncomingDevice(dev.macAddress)
+
+                            if (shouldBlock && !isFilteredBySanitizer) {
                                 repository.setDeviceBlocked(dev.macAddress, true)
                                 dev.copy(isBlocked = true)
-                            } else if (_isZeroFpEngineActive.value && isBenignPrivateMac && !dev.isAuthorized && !dev.isBlocked) {
+                            } else if ((_isZeroFpEngineActive.value || _guardUiState.value.fpFilterEnabled) && (isBenignPrivateMac || isFilteredBySanitizer) && !dev.isAuthorized && !dev.isBlocked) {
                                 dev.copy(
                                     isFalsePositiveSuppressed = true,
                                     threatLevel = ThreatLevel.FALSE_POSITIVE_SUPPRESSED,
-                                    corroborationVector = "Zero-FP: Private MAC Corroborated Safe (0% False Alarm Policy)"
+                                    corroborationVector = "MacSanitizer: Private MAC Corroborated Safe (0% False Alarm Policy)"
                                 )
                             } else dev
                         }
@@ -2443,6 +2514,246 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         workspaceClusterManager.enrollRecurringBetaTester(name, email, device)
     fun runDailyBetaFlightSuite(onComplete: ((BetaFlightRunResult) -> Unit)? = null) =
         workspaceClusterManager.runDailyBetaFlightSuite(onComplete)
+
+    // =========================================================================
+    // COMPLIANT SELF-DEFENSE & PRIVACY GUARD ACTIONS (NETWORK GUARD & MAC SANITIZER)
+    // =========================================================================
+
+    override fun onGatewayAnomalyDetected(oldGateway: String, newGateway: String) {
+        val knownNode = trustedGateways.value.firstOrNull { it.gatewayIp.equals(newGateway, ignoreCase = true) }
+        val isKnown = knownNode != null
+        val alert = GatewayAlert(
+            oldGateway = oldGateway,
+            newGateway = newGateway,
+            isKnownInDatabase = isKnown,
+            matchedLabel = knownNode?.label,
+            message = if (isKnown) {
+                "Mesh Roaming Detected: Gateway transitioned to recognized node '${knownNode?.label}' ($newGateway)."
+            } else {
+                "UNREGISTERED ROGUE GATEWAY: Gateway shifted to $newGateway (not found in Room trusted registry). Possible ARP spoofing or rogue AP impersonation."
+            }
+        )
+        _guardUiState.update {
+            it.copy(
+                activeAlert = alert,
+                intrudersCount = if (isKnown) it.intrudersCount else it.intrudersCount + 1,
+                lockedGatewayBaseline = oldGateway
+            )
+        }
+        triggerGatewaySwitchHapticAlert()
+        viewModelScope.launch {
+            if (isKnown) {
+                repository.updateGatewayLastSeen(newGateway)
+            } else {
+                repository.recordSecurityAlert(
+                    title = "ROGUE GATEWAY SHIFT: Self-Isolation Recommended",
+                    description = "Default gateway shifted unexpectedly from $oldGateway to unrecognized $newGateway. Safe lockdown available to sever local socket routes without transmitting rogue packets.",
+                    deviceIp = newGateway,
+                    deviceMac = "ROGUE_GATEWAY_DETECTED",
+                    severity = "CRITICAL",
+                    confidencePercent = 99
+                )
+            }
+        }
+    }
+
+    override fun onSafeLockdownExecuted() {
+        _guardUiState.update { it.copy(isLockdownActive = true) }
+        triggerGatewaySwitchHapticAlert()
+    }
+
+    fun triggerSafeLockdown() {
+        guardManager.executeSafeLockdown()
+    }
+
+    fun releaseSafeLockdown() {
+        guardManager.releaseLockdown()
+        _guardUiState.update { it.copy(isLockdownActive = false) }
+    }
+
+    fun dismissGuardGatewayAlert() {
+        _guardUiState.update { it.copy(activeAlert = null) }
+    }
+
+    fun trustAndAddDetectedGateway(
+        gatewayIp: String,
+        label: String = "Discovered Mesh Node",
+        makePrimary: Boolean = false
+    ) {
+        val currentSsid = _wifiState.value.ssid.ifBlank { "Known_Network" }
+        val currentBssid = _wifiState.value.bssid.ifBlank { null }
+        addTrustedGateway(
+            gatewayIp = gatewayIp,
+            bssid = currentBssid,
+            ssid = currentSsid,
+            subnetMask = "255.255.255.0",
+            label = label,
+            isPrimary = makePrimary
+        )
+        guardManager.resetBaseline(gatewayIp)
+        dismissGuardGatewayAlert()
+    }
+
+    fun runGatewayDiagnostics(targetIp: String? = null) {
+        if (_isDiagnosingGateway.value) return
+        _isDiagnosingGateway.value = true
+        viewModelScope.launch {
+            try {
+                val ip = targetIp ?: _wifiState.value.gatewayIp.ifBlank {
+                    primaryTrustedGateway.value?.gatewayIp ?: "192.168.1.1"
+                }
+                val primaryIp = primaryTrustedGateway.value?.gatewayIp
+                val result = diagnosticsManager.runDiagnostics(ip, primaryIp)
+                _gatewayDiagnostics.value = result
+            } catch (e: Exception) {
+                // Non-blocking fallback
+            } finally {
+                _isDiagnosingGateway.value = false
+            }
+        }
+    }
+
+    fun exportSentinelSecurityConfigJson(): String {
+        val gateways = trustedGateways.value
+        val whitelisted = whitelistedDevices.value.map { it.macAddress }
+        val jsonObj = JSONObject()
+        jsonObj.put("version", "Sentinel-4.2")
+        jsonObj.put("exportedAt", System.currentTimeMillis())
+        jsonObj.put("whitelistedCount", whitelisted.size)
+        val macsArr = JSONArray(whitelisted)
+        jsonObj.put("whitelistedMacs", macsArr)
+
+        val gwArr = JSONArray()
+        gateways.forEach { gw ->
+            val gwObj = JSONObject()
+            gwObj.put("gatewayIp", gw.gatewayIp)
+            gwObj.put("label", gw.label)
+            gwObj.put("ssid", gw.ssid)
+            gwObj.put("bssid", gw.bssid ?: "")
+            gwObj.put("subnetMask", gw.subnetMask)
+            gwObj.put("isPrimary", gw.isPrimary)
+            gwArr.put(gwObj)
+        }
+        jsonObj.put("trustedGateways", gwArr)
+        return jsonObj.toString(2)
+    }
+
+    fun importSentinelSecurityConfigJson(jsonString: String): Boolean {
+        return try {
+            val jsonObj = JSONObject(jsonString)
+            val gwArr = jsonObj.optJSONArray("trustedGateways")
+            if (gwArr != null) {
+                viewModelScope.launch {
+                    for (i in 0 until gwArr.length()) {
+                        val obj = gwArr.getJSONObject(i)
+                        val ip = obj.getString("gatewayIp")
+                        val label = obj.optString("label", "Imported Gateway")
+                        val ssid = obj.optString("ssid", "Imported_SSID")
+                        val bssid = obj.optString("bssid").ifBlank { null }
+                        val subnet = obj.optString("subnetMask", "255.255.255.0")
+                        val isPrimary = obj.optBoolean("isPrimary", false)
+                        repository.saveTrustedGateway(
+                            TrustedGateway(
+                                gatewayIp = ip,
+                                bssid = bssid,
+                                ssid = ssid,
+                                subnetMask = subnet,
+                                label = label,
+                                isPrimary = isPrimary
+                            )
+                        )
+                    }
+                }
+            }
+            val macsArr = jsonObj.optJSONArray("whitelistedMacs")
+            if (macsArr != null) {
+                viewModelScope.launch {
+                    for (i in 0 until macsArr.length()) {
+                        val mac = macsArr.getString(i)
+                        repository.addDeviceToWhitelist(
+                            DiscoveredDevice(
+                                macAddress = mac,
+                                ip = "0.0.0.0",
+                                vendor = "Imported Known Host"
+                            )
+                        )
+                    }
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun setFpFilterEnabled(enabled: Boolean) {
+        _guardUiState.update { it.copy(fpFilterEnabled = enabled) }
+    }
+
+    fun filterIncomingDevice(macAddress: String): Boolean {
+        val isRandom = MacSanitizer.isRandomizedMac(macAddress)
+        if (isRandom && _guardUiState.value.fpFilterEnabled) {
+            _guardUiState.update { it.copy(fpFilteredCount = it.fpFilteredCount + 1) }
+            return true
+        }
+        return false
+    }
+
+    fun hashDeviceIdentifier(identifier: String, salt: String = "WiFiSentinel-Salt-V1"): String {
+        _guardUiState.update { it.copy(totalHashedAuditsCount = it.totalHashedAuditsCount + 1) }
+        return MacSanitizer.hashIdentifier(identifier, salt)
+    }
+
+    fun simulateGatewayAnomalyForTesting() {
+        val oldGw = guardManager.getLockedGatewayBaseline() ?: "192.168.1.1"
+        val rogueGw = "192.168.1.254"
+        onGatewayAnomalyDetected(oldGw, rogueGw)
+    }
+
+    // =========================================================================
+    // TRUSTED GATEWAY PERSISTENCE (ROOM DATABASE)
+    // =========================================================================
+
+    fun addTrustedGateway(
+        gatewayIp: String,
+        bssid: String?,
+        ssid: String,
+        subnetMask: String = "255.255.255.0",
+        label: String,
+        isPrimary: Boolean = false
+    ) {
+        viewModelScope.launch {
+            val gateway = TrustedGateway(
+                gatewayIp = gatewayIp,
+                bssid = bssid,
+                ssid = ssid,
+                subnetMask = subnetMask,
+                label = label,
+                isPrimary = isPrimary
+            )
+            repository.saveTrustedGateway(gateway)
+            if (isPrimary) {
+                repository.setPrimaryTrustedGateway(gatewayIp)
+            }
+        }
+    }
+
+    fun setPrimaryTrustedGateway(gatewayIp: String) {
+        viewModelScope.launch {
+            repository.setPrimaryTrustedGateway(gatewayIp)
+        }
+    }
+
+    fun removeTrustedGateway(gatewayIp: String) {
+        viewModelScope.launch {
+            repository.deleteTrustedGateway(gatewayIp)
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        guardManager.stopMonitoring()
+    }
 }
 
 private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
