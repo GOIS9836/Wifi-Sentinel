@@ -1,0 +1,30 @@
+{
+  "version": "Sentinel-4.2",
+  "trustedGateways": [
+    {
+      "gatewayIp": "192.168.1.1",
+      "label": "G_4035 Primary Gateway",
+      "ssid": "G_4035",
+      "subnetMask": "255.255.255.0",
+      "isPrimary": true
+    }
+  ],
+  "whitelistedMacs": [
+    "b4:0f:3b:7f:a3:f0"
+  ],
+  "whitelistedEndpoints": [
+    {
+      "ip": "192.168.1.188",
+      "role": "Wireless Extender / Bridge Link",
+      "mac": "b4:0f:3b:7f:a3:f0"
+    },
+    {
+      "ip": "192.168.1.169",
+      "role": "Authorized Production Host"
+    },
+    {
+      "ip": "192.168.1.229",
+      "role": "Nodes-Pergamus Security Core"
+    }
+  ]
+}
