@@ -27,8 +27,8 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
-      - name: Run MacSanitizer Unit Test
-        run: ./gradlew testDebugUnitTest --tests "com.example.wifisentinel.MacSanitizerTest" --info
+      - name: Run Sentinel Unit Tests (Phase 1 & Phase 2)
+        run: ./gradlew testDebugUnitTest --tests "com.example.wifisentinel.*" --info
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
