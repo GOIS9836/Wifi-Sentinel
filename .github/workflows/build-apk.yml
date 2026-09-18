@@ -24,8 +24,10 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Make Gradlew Executable
-        run: chmod +x gradlew
+      - name: Generate Official Gradle Wrapper
+        run: |
+          gradle wrapper
+          chmod +x gradlew
 
       - name: Run Sentinel Unit Tests (Phases 1-3)
         run: ./gradlew testDebugUnitTest --tests "com.example.wifisentinel.*" --info
