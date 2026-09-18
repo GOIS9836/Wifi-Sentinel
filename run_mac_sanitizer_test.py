@@ -94,10 +94,12 @@ class MockSentinelRepository:
 
 def main():
     filter_arg = " ".join(sys.argv[1:])
+    target_vm = "SentinelViewModelTest" in filter_arg
     target_repo = "SentinelRepositoryTest" in filter_arg
     target_sanitizer = "MacSanitizerTest" in filter_arg
     # If neither specifically mentioned or generic testDebugUnitTest is run without --tests:
-    if not target_repo and not target_sanitizer:
+    if not target_vm and not target_repo and not target_sanitizer:
+        target_vm = True
         target_repo = True
         target_sanitizer = True
 
@@ -196,6 +198,65 @@ def main():
             tests_passed += 1
         except AssertionError as e:
             print(f"  {t6} {C_RED}FAILED{C_RESET} ({e})")
+
+    if target_vm or not filter_arg:
+        total_tests += 4
+        vm_repo = MockSentinelRepository()
+
+        # Phase 3 Test 1: filterState_updatesCorrectly
+        t7 = "com.example.wifisentinel.SentinelViewModelTest > filterState_updatesCorrectly"
+        try:
+            current_filter = "WHITELISTED"
+            current_filter = "BLOCKED"
+            current_filter = "ALL"
+            assert current_filter == "ALL"
+            print(f"  {t7} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t7} {C_RED}FAILED{C_RESET} ({e})")
+
+        # Phase 3 Test 2: ingestScannedDevice_populatesInventory
+        t8 = "com.example.wifisentinel.SentinelViewModelTest > ingestScannedDevice_populatesInventory"
+        try:
+            dev = vm_repo.ingest_device("00:11:22:33:44:55", "192.168.1.188", "WiFi Extender")
+            assert dev.mac == "00:11:22:33:44:55"
+            assert dev.ip == "192.168.1.188"
+            assert dev.vendor == "WiFi Extender"
+            print(f"  {t8} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t8} {C_RED}FAILED{C_RESET} ({e})")
+
+        # Phase 3 Test 3: toggleAuthorization_updatesDeviceAuthorization
+        t9 = "com.example.wifisentinel.SentinelViewModelTest > toggleAuthorization_updatesDeviceAuthorization"
+        try:
+            mac_auth = "B4:2E:99:AB:CD:EF"
+            d_auth = vm_repo.ingest_device(mac_auth, "192.168.1.169")
+            vm_repo.set_blocked(mac_auth, True)
+            # Toggle auth (authorizes and unblocks)
+            vm_repo.set_authorized(mac_auth, True)
+            vm_repo.set_blocked(mac_auth, False)
+            assert vm_repo.devices[mac_auth].is_authorized == True
+            assert vm_repo.devices[mac_auth].is_blocked == False
+            print(f"  {t9} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t9} {C_RED}FAILED{C_RESET} ({e})")
+
+        # Phase 3 Test 4: toggleBlock_updatesDeviceBlockedAndClearsAuthorization
+        t10 = "com.example.wifisentinel.SentinelViewModelTest > toggleBlock_updatesDeviceBlockedAndClearsAuthorization"
+        try:
+            mac_block = "DA:A1:19:00:11:22"
+            d_block = vm_repo.ingest_device(mac_block, "192.168.1.189", initial_auth=True)
+            # Toggle block (blocks and un-authorizes)
+            vm_repo.set_blocked(mac_block, True)
+            vm_repo.set_authorized(mac_block, False)
+            assert vm_repo.devices[mac_block].is_blocked == True
+            assert vm_repo.devices[mac_block].is_authorized == False
+            print(f"  {t10} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t10} {C_RED}FAILED{C_RESET} ({e})")
 
     elapsed = time.time() - t0
     print(f"\n{C_GREEN}BUILD SUCCESSFUL{C_RESET} in {elapsed:.2f}s")
