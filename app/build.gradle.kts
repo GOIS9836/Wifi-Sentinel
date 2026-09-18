@@ -83,10 +83,9 @@ dependencies {
   implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.5")
 
   // Room Database
-  val roomVersion = "2.6.1"
-  implementation("androidx.room:room-runtime:$roomVersion")
-  implementation("androidx.room:room-ktx:$roomVersion")
-  "ksp"("androidx.room:room-compiler:$roomVersion")
+  implementation(libs.androidx.room.runtime)
+  implementation(libs.androidx.room.ktx)
+  "ksp"(libs.androidx.room.compiler)
 
   // Coroutines & Concurrency
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
