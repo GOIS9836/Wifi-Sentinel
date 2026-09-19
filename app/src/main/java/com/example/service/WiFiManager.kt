@@ -238,6 +238,11 @@ class WiFiManager(private val context: Context) {
     fun getNetworkDetails(): WifiNetworkDetails = getCurrentNetworkDetails()
 
     /**
+     * Retrieves real-time Wi-Fi signal strength and link speed telemetry from NetworkMonitorService.
+     */
+    fun getRealtimeMetrics(): WifiRealtimeMetrics = NetworkMonitorService.queryCurrentMetrics(context)
+
+    /**
      * Retrieves a comprehensive snapshot of the current Wi-Fi network state.
      */
     fun getNetworkState(): WiFiNetworkStatus {

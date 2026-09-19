@@ -143,6 +143,7 @@ class WifiManagerService(private val context: Context) {
     fun getBssid(): String = getBSSID()
     fun getRssi(): Int = getRSSI()
     fun getNetworkDetails(): WifiNetworkDetails = getCurrentNetworkDetails()
+    fun getRealtimeMetrics(): WifiRealtimeMetrics = NetworkMonitorService.queryCurrentMetrics(context)
 
     fun getNetworkState(): WiFiNetworkStatus {
         val details = getCurrentNetworkDetails()

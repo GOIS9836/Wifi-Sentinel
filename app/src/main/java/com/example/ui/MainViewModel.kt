@@ -58,9 +58,11 @@ import com.example.service.DeviceWhitelistComparisonEngine
 import com.example.service.FirewallAclRule
 import com.example.service.JunkCleanerEngine
 import com.example.service.NetworkAccessEnforcer
+import com.example.service.NetworkMonitorService
 import com.example.service.NetworkReportGenerator
 import com.example.service.SecurityNotificationDispatcher
 import com.example.service.WiFiManager
+import com.example.service.WifiRealtimeMetrics
 import com.example.service.WifiScannerService
 import com.example.service.ZeroToleranceDuplicationGuard
 import com.example.service.WorkspaceClusterManager
@@ -278,6 +280,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     private val _isGeneratingReport = MutableStateFlow(false)
     val isGeneratingReport: StateFlow<Boolean> = _isGeneratingReport.asStateFlow()
 
+    // Real-Time Wi-Fi Signal Strength & Link Speed Network Monitor Service
+    val networkMonitorMetrics: StateFlow<WifiRealtimeMetrics> = NetworkMonitorService.metrics
+    val isNetworkMonitoringActive: StateFlow<Boolean> = NetworkMonitorService.isMonitoringActive
+
     // Antivirus & Malware Scanner States
     private val _antivirusState = MutableStateFlow(AntivirusScannerState())
     val antivirusState: StateFlow<AntivirusScannerState> = _antivirusState.asStateFlow()
@@ -470,6 +476,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         startAntivirusScan()
         _dailyScanSchedule.value = DailyScanScheduler.loadSettings(application)
         refreshNetworkRiskScore()
+
+        try {
+            NetworkMonitorService.start(application)
+        } catch (e: Exception) {
+            // Non-blocking in headless test runtime
+        }
+    }
+
+    fun refreshNetworkMetrics() {
+        try {
+            NetworkMonitorService.refresh(getApplication())
+        } catch (e: Exception) {
+            // Non-blocking
+        }
     }
 
     private fun startTelemetryTicker() {
@@ -477,20 +497,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         telemetryTickerJob = viewModelScope.launch {
             while (true) {
                 val live = repository.getLiveWifiState()
+                val liveMetrics = NetworkMonitorService.metrics.value
                 // Integrate real-time status from WiFiManager (handles metered, signal percent, and live capabilities)
                 val directStatus = wifiManager.getNetworkState()
-                val liveRssi = if (directStatus.isConnected && directStatus.rssi in -100..0) directStatus.rssi else live.rssi
+                val liveRssi = when {
+                    liveMetrics.isConnected && liveMetrics.rssi in -100..0 -> liveMetrics.rssi
+                    directStatus.isConnected && directStatus.rssi in -100..0 -> directStatus.rssi
+                    else -> live.rssi
+                }
 
                 // Add slight dynamic variance to RSSI (±1 dBm) to reflect real RF antenna physics
                 val jitter = Random.nextInt(-1, 2)
                 val dynamicRssi = (liveRssi + jitter).coerceIn(-95, -25)
+                val activeLinkSpeed = when {
+                    liveMetrics.linkSpeedMbps > 0 -> liveMetrics.linkSpeedMbps
+                    directStatus.linkSpeedMbps > 0 -> directStatus.linkSpeedMbps
+                    else -> live.linkSpeedMbps
+                }
+
                 val updatedState = live.copy(
-                    isConnected = directStatus.isConnected || live.isConnected,
-                    ssid = if (directStatus.ssid.isNotBlank() && directStatus.ssid != "Disconnected" && directStatus.ssid != "Connected Wi-Fi") directStatus.ssid else live.ssid,
-                    bssid = if (directStatus.bssid.isNotBlank() && directStatus.bssid != "00:00:00:00:00:00") directStatus.bssid else live.bssid,
+                    isConnected = liveMetrics.isConnected || directStatus.isConnected || live.isConnected,
+                    ssid = when {
+                        liveMetrics.ssid.isNotBlank() && liveMetrics.ssid != "Disconnected" && liveMetrics.ssid != "Connected Wi-Fi" -> liveMetrics.ssid
+                        directStatus.ssid.isNotBlank() && directStatus.ssid != "Disconnected" && directStatus.ssid != "Connected Wi-Fi" -> directStatus.ssid
+                        else -> live.ssid
+                    },
+                    bssid = when {
+                        liveMetrics.bssid.isNotBlank() && liveMetrics.bssid != "00:00:00:00:00:00" -> liveMetrics.bssid
+                        directStatus.bssid.isNotBlank() && directStatus.bssid != "00:00:00:00:00:00" -> directStatus.bssid
+                        else -> live.bssid
+                    },
                     rssi = dynamicRssi,
                     signalPercent = ((dynamicRssi + 100) * 2).coerceIn(0, 100),
-                    linkSpeedMbps = if (directStatus.linkSpeedMbps > 0) directStatus.linkSpeedMbps else live.linkSpeedMbps
+                    linkSpeedMbps = activeLinkSpeed
                 )
                 _wifiState.value = updatedState
 

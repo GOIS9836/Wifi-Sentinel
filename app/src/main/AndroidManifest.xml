@@ -77,6 +77,11 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".service.NetworkMonitorService"
+            android:enabled="true"
+            android:exported="false" />
     </application>
 
 </manifest>

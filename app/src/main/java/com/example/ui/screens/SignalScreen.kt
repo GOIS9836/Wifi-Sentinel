@@ -26,11 +26,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SignalWifi4Bar
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -86,6 +89,7 @@ fun SignalScreen(
     val signalLogs by viewModel.signalLogs.collectAsState()
     val summaryReport by viewModel.networkSummaryReport.collectAsState()
     val isGeneratingReport by viewModel.isGeneratingReport.collectAsState()
+    val monitorMetrics by viewModel.networkMonitorMetrics.collectAsState()
     val liveNow by rememberLiveCurrentTime()
     val unauthorizedCount = discoveredDevices.count { !it.isAuthorized && !it.isSelf && !it.isGateway }
 
@@ -123,6 +127,14 @@ fun SignalScreen(
         // Live Signal Gauge
         item {
             SignalGauge(wifiState = wifiState)
+        }
+
+        // Real-Time Network Monitor Service (ConnectivityManager + WifiManager)
+        item {
+            RealtimeNetworkMonitorCard(
+                metrics = monitorMetrics,
+                onRefresh = { viewModel.refreshNetworkMetrics() }
+            )
         }
 
         // Rolling Live RSSI Timeline
@@ -675,6 +687,272 @@ private fun SpatialLogItemRow(
                     contentDescription = "Delete Spot Sample",
                     tint = TextMuted,
                     modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RealtimeNetworkMonitorCard(
+    metrics: com.example.service.WifiRealtimeMetrics,
+    onRefresh: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(CyberSurfaceVariant)
+            .border(1.dp, CyberBorder, RoundedCornerShape(20.dp))
+            .padding(18.dp)
+    ) {
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(CyberCyan.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WifiTethering,
+                        contentDescription = null,
+                        tint = CyberCyan,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Network Monitor Service",
+                            color = TextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (metrics.isConnected) CyberGreen.copy(alpha = 0.15f) else CyberRed.copy(alpha = 0.15f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (metrics.isConnected) "LIVE" else "OFFLINE",
+                                color = if (metrics.isConnected) CyberGreen else CyberRed,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                    Text(
+                        text = "ConnectivityManager & WifiManager Real-Time Monitor",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onRefresh,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Refresh Monitor Telemetry",
+                    tint = CyberCyan,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Dual Primary Metrics: Signal Strength (RSSI) & Link Speed
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Signal Strength Box
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CyberSurface)
+                    .border(1.dp, CyberBorder, RoundedCornerShape(14.dp))
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Signal Strength",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = Icons.Default.SignalWifi4Bar,
+                        contentDescription = null,
+                        tint = if (metrics.rssi >= -65) CyberGreen else if (metrics.rssi >= -78) CyberAmber else CyberRed,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "${metrics.rssi} dBm",
+                    color = if (metrics.rssi >= -65) CyberGreen else if (metrics.rssi >= -78) CyberAmber else CyberRed,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "${metrics.signalPercent}% • Level ${metrics.signalLevel}/4 (${metrics.signalQuality})",
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LinearProgressIndicator(
+                    progress = { (metrics.signalPercent / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = if (metrics.rssi >= -65) CyberGreen else if (metrics.rssi >= -78) CyberAmber else CyberRed,
+                    trackColor = CyberBorder
+                )
+            }
+
+            // Physical Link Speed Box
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CyberSurface)
+                    .border(1.dp, CyberBorder, RoundedCornerShape(14.dp))
+                    .padding(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Physical Link Speed",
+                        color = TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = null,
+                        tint = CyberCyan,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = "${metrics.linkSpeedMbps} Mbps",
+                    color = CyberCyan,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Text(
+                    text = "Tx: ${metrics.txLinkSpeedMbps} Mbps • Rx: ${metrics.rxLinkSpeedMbps} Mbps",
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LinearProgressIndicator(
+                    progress = { (metrics.linkSpeedMbps / 1000f).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                    color = CyberCyan,
+                    trackColor = CyberBorder
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Detailed RF & Bandwidth Telemetry Grid
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(CyberSurface)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("RF Frequency & Band:", color = TextMuted, fontSize = 11.sp)
+                Text(
+                    "${metrics.band} • Ch ${metrics.channel} (${metrics.frequencyMhz} MHz)",
+                    color = TextPrimary,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+
+            if (metrics.downstreamBandwidthKbps > 0 || metrics.upstreamBandwidthKbps > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Capacities (Down/Up):", color = TextMuted, fontSize = 11.sp)
+                    Text(
+                        "${metrics.downstreamBandwidthKbps / 1000} Mbps / ${metrics.upstreamBandwidthKbps / 1000} Mbps",
+                        color = TextPrimary,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text("Metered & Captive Check:", color = TextMuted, fontSize = 11.sp)
+                Text(
+                    if (metrics.isMetered) "Metered Connection" else "Unmetered (Full Pipe)",
+                    color = if (metrics.isMetered) CyberAmber else CyberGreen,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
