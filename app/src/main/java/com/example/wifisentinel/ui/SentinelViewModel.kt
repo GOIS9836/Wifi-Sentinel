@@ -21,17 +21,14 @@ open class SentinelViewModel(
 ) : ViewModel() {
 
     private val _filterState = MutableStateFlow(DeviceFilter.ALL)
-    private val _loadingState = MutableStateFlow(false)
 
     val uiState: StateFlow<SentinelUiState> = combine(
         repository.allDevices,
         repository.whitelistedDevices,
         repository.blockedDevices,
         repository.securityAlerts,
-        repository.unacknowledgedAlertsCount,
-        _filterState,
-        _loadingState
-    ) { allDevs, whiteDevs, blockedDevs, alerts, unackCount, filter, loading ->
+        _filterState
+    ) { allDevs, whiteDevs, blockedDevs, alerts, filter ->
         val filteredList = when (filter) {
             DeviceFilter.ALL -> allDevs
             DeviceFilter.WHITELISTED -> whiteDevs
@@ -44,8 +41,8 @@ open class SentinelViewModel(
             whitelistedDevices = whiteDevs,
             blockedDevices = blockedDevs,
             alerts = alerts,
-            unacknowledgedAlertsCount = unackCount,
-            isLoading = loading,
+            unacknowledgedAlertsCount = alerts.count { !it.isAcknowledged },
+            isLoading = false,
             selectedFilter = filter,
             complianceStatus = "POTRAZ Chapter 12:07 Invariant 0% Drift",
             classification = "BENEDICTUS"
