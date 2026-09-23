@@ -54,6 +54,8 @@ data class SystemSecurityAudit(
     val isDeveloperOptionsEnabled: Boolean = false,
     val isLockScreenSecure: Boolean = true,
     val isUnknownSourcesEnabled: Boolean = false,
+    val activeDeviceAdminsCount: Int = 0,
+    val unauthorizedDeviceAdmins: List<String> = emptyList(),
     val overallSecurityScore: Int = 95,
     val activeIssuesCount: Int = 0,
     val vulnerabilities: List<String> = emptyList(),

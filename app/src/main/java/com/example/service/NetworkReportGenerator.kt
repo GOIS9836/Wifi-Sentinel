@@ -21,7 +21,9 @@ object NetworkReportGenerator {
         isGatewayLocked: Boolean,
         isGatewayMatch: Boolean,
         duplicationStatus: DuplicationGuardStatus,
-        isZeroToleranceActive: Boolean
+        isZeroToleranceActive: Boolean,
+        scanDurationMs: Long = 2100L,
+        scoreValidityDurationSec: Long = 900L
     ): NetworkSummaryReport {
         // 1. Calculate RF Congestion on current channel
         val sameChannelAps = nearbyAps.count { it.channel == wifiState.channel }
@@ -198,7 +200,9 @@ object NetworkReportGenerator {
             incidents = incidentTally,
             recentIncidents = recentIncidentItems,
             keyFindings = findings,
-            actionableRecommendations = recommendations
+            actionableRecommendations = recommendations,
+            scanRundownDurationMs = scanDurationMs,
+            scoreValidityDurationSec = scoreValidityDurationSec
         )
     }
 }

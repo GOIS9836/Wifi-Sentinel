@@ -1,6 +1,7 @@
 package com.example.service
 
 import android.app.KeyguardManager
+import android.app.admin.DevicePolicyManager
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInfo
@@ -53,6 +54,13 @@ object AntivirusScannerEngine {
             emptyList()
         }
 
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        val activeAdmins = try {
+            dpm?.activeAdmins?.map { it.packageName }?.toSet() ?: emptySet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+
         val total = packages.size
         emit(ScanProgressEvent.Started(total))
 
@@ -72,7 +80,7 @@ object AntivirusScannerEngine {
                 packageName = pkg.packageName
             ))
 
-            val scanResult = analyzePackage(pm, pkg)
+            val scanResult = analyzePackage(pm, pkg, activeAdmins)
             results.add(scanResult)
 
             // Small delay for smooth visual scanning feedback in UI
@@ -98,6 +106,13 @@ object AntivirusScannerEngine {
      */
     fun scanAllAppsSync(context: Context): List<AppSecurityScanResult> {
         val pm = context.packageManager
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        val activeAdmins = try {
+            dpm?.activeAdmins?.map { it.packageName }?.toSet() ?: emptySet()
+        } catch (e: Exception) {
+            emptySet()
+        }
+
         val packages = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()))
@@ -111,7 +126,7 @@ object AntivirusScannerEngine {
 
         val results = packages.mapNotNull { pkg ->
             if (pkg.applicationInfo != null) {
-                analyzePackage(pm, pkg)
+                analyzePackage(pm, pkg, activeAdmins)
             } else null
         }
 
@@ -122,7 +137,7 @@ object AntivirusScannerEngine {
         )
     }
 
-    fun analyzePackage(pm: PackageManager, pkg: PackageInfo): AppSecurityScanResult {
+    fun analyzePackage(pm: PackageManager, pkg: PackageInfo, activeAdmins: Set<String> = emptySet()): AppSecurityScanResult {
         val appInfo = pkg.applicationInfo
         val isSystem = if (appInfo != null) {
             (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
@@ -183,8 +198,13 @@ object AntivirusScannerEngine {
             }
 
             if ("android.permission.BIND_DEVICE_ADMIN" in requestedPermissions) {
-                riskScore += 30
-                reasons.add("Requests Device Administrator privileges (can prevent uninstallation)")
+                if (pkg.packageName in activeAdmins) {
+                    riskScore += 45
+                    reasons.add("Active Device Administrator: App holds granted device management privileges (Uninstall lockout & persistence risk)")
+                } else {
+                    riskScore += 30
+                    reasons.add("Requests Device Administrator privileges (can prevent uninstallation)")
+                }
             }
 
             val smsPermissions = listOf("android.permission.READ_SMS", "android.permission.RECEIVE_SMS", "android.permission.SEND_SMS")
@@ -301,12 +321,36 @@ object AntivirusScannerEngine {
             recommendations.add("Disable install from unknown sources to block drive-by malware payloads.")
         }
 
+        // 6. Mobile Admin Apps Protection (Zero-Trust Active Device Admin Audit)
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
+        val activeAdmins = try {
+            dpm?.activeAdmins?.map { it.packageName } ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        // Whitelisted platform/security device administrator packages
+        val trustedAdminPackages = setOf(
+            "com.google.android.apps.adm", // Google Find My Device
+            "com.google.android.gms",
+            context.packageName
+        )
+
+        val unauthorizedAdmins = activeAdmins.filter { it !in trustedAdminPackages }
+        if (unauthorizedAdmins.isNotEmpty()) {
+            securityScore -= 25
+            vulnerabilities.add("Active Device Administrator privileges held by ${unauthorizedAdmins.size} unauthorized app(s): ${unauthorizedAdmins.joinToString(", ")}")
+            recommendations.add("Revoke unverified Device Administrator access in Android Security Settings to prevent persistence and uninstall lockout.")
+        }
+
         return SystemSecurityAudit(
             isRootDetected = isRooted,
             isUsbDebuggingEnabled = isAdb,
             isDeveloperOptionsEnabled = isDev,
             isLockScreenSecure = isSecureLock,
             isUnknownSourcesEnabled = isUnknownSources,
+            activeDeviceAdminsCount = activeAdmins.size,
+            unauthorizedDeviceAdmins = unauthorizedAdmins,
             overallSecurityScore = securityScore.coerceIn(10, 100),
             activeIssuesCount = vulnerabilities.size,
             vulnerabilities = vulnerabilities,

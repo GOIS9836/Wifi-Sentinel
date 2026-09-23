@@ -191,6 +191,8 @@ class NetworkSummaryReportTest {
         val text = report.toFormattedReportText()
 
         assertTrue(text.contains("SENTINEL NETWORK HEALTH & SECURITY"))
+        assertTrue(text.contains("Scan-Rundown Time:"))
+        assertTrue(text.contains("Score TTL Duration:"))
         assertTrue(text.contains("SentinelTestNet"))
         assertTrue(text.contains("88/100"))
         assertTrue(text.contains("Good"))

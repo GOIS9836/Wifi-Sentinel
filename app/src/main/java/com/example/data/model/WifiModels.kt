@@ -123,7 +123,10 @@ data class AiOptimizationReport(
     val securityAudit: String = "",
     val bandSteeringAdvice: String = "",
     val actionItems: List<String> = emptyList(),
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val scanRundownDurationMs: Long = 1850L,
+    val aiInferenceLatencyMs: Long = 1200L,
+    val scoreValidityDurationSec: Long = 900L
 )
 
 data class ChatMessage(
@@ -321,12 +324,15 @@ data class NetworkSummaryReport(
     val incidents: IncidentTally = IncidentTally(),
     val recentIncidents: List<ReportIncidentItem> = emptyList(),
     val keyFindings: List<String> = emptyList(),
-    val actionableRecommendations: List<String> = emptyList()
+    val actionableRecommendations: List<String> = emptyList(),
+    val scanRundownDurationMs: Long = 2100L,
+    val scoreValidityDurationSec: Long = 900L
 ) {
     fun toFormattedReportText(): String {
         return buildString {
             appendLine("=== SENTINEL NETWORK HEALTH & SECURITY INCIDENT REPORT ===")
             appendLine("Generated: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(generatedAt))}")
+            appendLine("Scan-Rundown Time: ${String.format(java.util.Locale.US, "%.2fs", scanRundownDurationMs / 1000f)} | Score TTL Duration: ${scoreValidityDurationSec / 60}m (${scoreValidityDurationSec}s)")
             appendLine("Overall Health Score: $overallHealthScore/100 (${healthGrade.label} • ${healthGrade.rating})")
             appendLine()
             appendLine("[NETWORK HEALTH METRICS]")

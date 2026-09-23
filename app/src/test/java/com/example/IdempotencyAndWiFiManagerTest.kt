@@ -324,4 +324,26 @@ class IdempotencyAndWiFiManagerTest {
         com.example.service.NetworkScannerForegroundService.stop(application)
         com.example.service.NetworkScannerForegroundService.stop(application)
     }
+
+    @Test
+    fun testAuditSystemSecurityAndMobileAdminIdempotency() {
+        val audit1 = com.example.service.AntivirusScannerEngine.auditSystemSecurity(application)
+        val audit2 = com.example.service.AntivirusScannerEngine.auditSystemSecurity(application)
+        val audit3 = com.example.service.AntivirusScannerEngine.auditSystemSecurity(application)
+
+        assertEquals("System security score must be deterministic across re-audits",
+            audit1.overallSecurityScore, audit2.overallSecurityScore)
+        assertEquals("Subsequent audit must maintain identical security score (Idempotency Invariant)",
+            audit2.overallSecurityScore, audit3.overallSecurityScore)
+        assertEquals("Active issues count must be invariant",
+            audit1.activeIssuesCount, audit2.activeIssuesCount)
+        assertEquals("Active device admin count must be invariant",
+            audit1.activeDeviceAdminsCount, audit2.activeDeviceAdminsCount)
+        assertEquals("Unauthorized device admin list must be invariant",
+            audit1.unauthorizedDeviceAdmins, audit2.unauthorizedDeviceAdmins)
+        assertEquals("Vulnerabilities list must be invariant",
+            audit1.vulnerabilities, audit2.vulnerabilities)
+        assertEquals("Hardening recommendations must be invariant",
+            audit1.hardeningRecommendations, audit2.hardeningRecommendations)
+    }
 }

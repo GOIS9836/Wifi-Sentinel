@@ -25,6 +25,10 @@
     {
       "ip": "192.168.1.229",
       "role": "Nodes-Pergamus Security Core"
+    },
+    {
+      "ip": "192.168.1.189",
+      "role": "Authorized Lenovo IdeaPad (Linux Mint: libertycuca9836@ideapad)"
     }
   ],
   "autonomousQuarantinePolicy": {

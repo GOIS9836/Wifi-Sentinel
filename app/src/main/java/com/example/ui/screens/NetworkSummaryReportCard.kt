@@ -180,11 +180,29 @@ fun NetworkSummaryReportCard(
                                 )
                             }
                         }
-                        Text(
-                            text = "Generated ${TimeUtils.formatRelativeTime(report.generatedAt)}",
-                            color = TextMuted,
-                            fontSize = 11.sp
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Generated ${TimeUtils.formatRelativeTime(report.generatedAt)}",
+                                color = TextMuted,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "• ${String.format(java.util.Locale.US, "%.2fs", report.scanRundownDurationMs / 1000f)}",
+                                color = CyberCyan,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "• TTL ${report.scoreValidityDurationSec / 60}m",
+                                color = CyberGreen,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
 
@@ -251,7 +269,9 @@ fun NetworkSummaryReportCard(
                 gradeColor = gradeColor,
                 ssid = report.ssid,
                 incidentCount = report.incidents.totalCount,
-                unknownCount = report.unknownDevicesCount
+                unknownCount = report.unknownDevicesCount,
+                scanRundownDurationMs = report.scanRundownDurationMs,
+                scoreValidityDurationSec = report.scoreValidityDurationSec
             )
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -477,7 +497,9 @@ private fun HealthScoreBanner(
     gradeColor: Color,
     ssid: String,
     incidentCount: Int,
-    unknownCount: Int
+    unknownCount: Int,
+    scanRundownDurationMs: Long = 2100L,
+    scoreValidityDurationSec: Long = 900L
 ) {
     Box(
         modifier = Modifier
@@ -514,6 +536,38 @@ private fun HealthScoreBanner(
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CyberCyan.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "SCAN: ${String.format(java.util.Locale.US, "%.2fs", scanRundownDurationMs / 1000f)}",
+                            color = CyberCyan,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CyberGreen.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "TTL: ${scoreValidityDurationSec / 60}m (${scoreValidityDurationSec}s)",
+                            color = CyberGreen,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
             }
 
             // Circular Score Dial
@@ -815,7 +869,7 @@ private fun FullNetworkReportDialog(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Generated ${TimeUtils.formatDateTime(report.generatedAt)}",
+                                text = "Generated ${TimeUtils.formatDateTime(report.generatedAt)} • Scan: ${String.format(java.util.Locale.US, "%.2fs", report.scanRundownDurationMs / 1000f)} • TTL: ${report.scoreValidityDurationSec / 60}m",
                                 color = TextMuted,
                                 fontSize = 11.sp
                             )
@@ -847,7 +901,9 @@ private fun FullNetworkReportDialog(
                         },
                         ssid = report.ssid,
                         incidentCount = report.incidents.totalCount,
-                        unknownCount = report.unknownDevicesCount
+                        unknownCount = report.unknownDevicesCount,
+                        scanRundownDurationMs = report.scanRundownDurationMs,
+                        scoreValidityDurationSec = report.scoreValidityDurationSec
                     )
 
                     TelemetryQuadrantGrid(report = report)

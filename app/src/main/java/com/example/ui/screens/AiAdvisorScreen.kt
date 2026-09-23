@@ -393,6 +393,53 @@ private fun HealthScoreCard(report: AiOptimizationReport) {
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Medium
                 )
+                Spacer(modifier = Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CyberCyan.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "SCAN: ${String.format(java.util.Locale.US, "%.2fs", report.scanRundownDurationMs / 1000f)}",
+                            color = CyberCyan,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CyberTeal.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "AI: ${report.aiInferenceLatencyMs}ms",
+                            color = CyberTeal,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(CyberGreen.copy(alpha = 0.15f))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "TTL: ${report.scoreValidityDurationSec / 60}m",
+                            color = CyberGreen,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.width(14.dp))

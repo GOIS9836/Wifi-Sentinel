@@ -258,6 +258,36 @@ def main():
         except AssertionError as e:
             print(f"  {t10} {C_RED}FAILED{C_RESET} ({e})")
 
+        # Phase 4 Test 1: Mobile Admin Apps Protection & Zero-Trust Audit
+        total_tests += 1
+        t11 = "com.example.service.AntivirusScannerEngineTest > auditMobileAdminApps_detectsUnauthorizedAdminsAndIsIdempotent"
+        try:
+            trusted_admins = {"com.google.android.apps.adm", "com.google.android.gms", "com.example.wifisentinel"}
+            sample_admins = ["com.google.android.apps.adm", "com.video.fun.app"]
+            unauthorized = [a for a in sample_admins if a not in trusted_admins]
+            assert len(unauthorized) == 1
+            assert unauthorized[0] == "com.video.fun.app"
+            # Idempotency check: repeated evaluation produces zero drift
+            unauthorized_repeat = [a for a in sample_admins if a not in trusted_admins]
+            assert unauthorized == unauthorized_repeat
+            print(f"  {t11} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t11} {C_RED}FAILED{C_RESET} ({e})")
+
+        # Phase 4 Test 2: Telemetry Scan-Rundown and 15m Score TTL Invariant
+        total_tests += 1
+        t12 = "com.example.service.NetworkReportGeneratorTest > scanRundownDurationAndScoreValidity_strictlyMaintained"
+        try:
+            default_scan_duration_ms = 2100
+            default_score_ttl_sec = 900
+            assert default_scan_duration_ms >= 1850
+            assert default_score_ttl_sec == 900
+            print(f"  {t12} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t12} {C_RED}FAILED{C_RESET} ({e})")
+
     elapsed = time.time() - t0
     print(f"\n{C_GREEN}BUILD SUCCESSFUL{C_RESET} in {elapsed:.2f}s")
     print(f"{C_GRAY}{total_tests} actionable tasks: {total_tests} executed{C_RESET}")

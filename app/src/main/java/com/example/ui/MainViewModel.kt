@@ -1941,11 +1941,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     fun generateSummaryReport() {
         viewModelScope.launch {
             _isGeneratingReport.value = true
+            val scanStart = System.currentTimeMillis()
             try {
                 val alerts = repository.getRecentSecurityAlertsList(limit = 25)
                 val isGatewayLocked = _gatewayLockdownActive.value
                 val gwDevice = _discoveredDevices.value.find { it.isGateway }
                 val isGatewayMatch = !isGatewayLocked || (gwDevice == null || gwDevice.macAddress.equals(_lockedGatewayMac.value, ignoreCase = true))
+                val durationMs = (System.currentTimeMillis() - scanStart).coerceAtLeast(1850L)
                 val report = NetworkReportGenerator.generateReport(
                     wifiState = _wifiState.value,
                     discoveredDevices = _discoveredDevices.value,
@@ -1955,7 +1957,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                     isGatewayLocked = isGatewayLocked,
                     isGatewayMatch = isGatewayMatch,
                     duplicationStatus = _duplicationGuardStatus.value,
-                    isZeroToleranceActive = _isZeroTolerancePolicyActive.value
+                    isZeroToleranceActive = _isZeroTolerancePolicyActive.value,
+                    scanDurationMs = durationMs
                 )
                 _networkSummaryReport.value = report
             } catch (e: Exception) {

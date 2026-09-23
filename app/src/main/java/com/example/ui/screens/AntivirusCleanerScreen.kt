@@ -1741,6 +1741,14 @@ fun SystemHardeningChecksList(
             failedText = "PERMITTED"
         )
 
+        AuditCheckRow(
+            title = "Mobile Admin Apps Sentry",
+            description = if (audit.unauthorizedDeviceAdmins.isEmpty()) "Zero unverified apps hold Device Admin persistence locks" else "${audit.unauthorizedDeviceAdmins.size} unauthorized app(s) hold Device Admin privileges",
+            isPassed = audit.unauthorizedDeviceAdmins.isEmpty(),
+            passedText = "ZERO ROGUE (SECURE)",
+            failedText = "${audit.unauthorizedDeviceAdmins.size} ROGUE ADMIN"
+        )
+
         Spacer(modifier = Modifier.height(6.dp))
 
         // Open Security Settings shortcut button
