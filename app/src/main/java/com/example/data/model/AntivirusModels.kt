@@ -16,13 +16,16 @@ data class AppSecurityScanResult(
     val isSystemApp: Boolean,
     val installerSource: String, // "Google Play", "Sideloaded / APK", "System"
     val riskLevel: AppRiskLevel,
-    val riskScore: Int, // 0 - 100
+    val riskScore: Int, // 0 - 100+
     val riskReasons: List<String> = emptyList(),
     val dangerousPermissions: List<String> = emptyList(),
     val isQuarantined: Boolean = false,
     val isWhitelisted: Boolean = false,
     val appSizeBytes: Long = 0L,
-    val targetSdkVersion: Int = 34
+    val targetSdkVersion: Int = 34,
+    val hasDynamicCodeLoading: Boolean = false,
+    val hasCleartextTraffic: Boolean = false,
+    val hasPotrazIdentifierHarvesting: Boolean = false
 )
 
 enum class JunkType {

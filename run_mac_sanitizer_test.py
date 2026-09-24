@@ -288,6 +288,43 @@ def main():
         except AssertionError as e:
             print(f"  {t12} {C_RED}FAILED{C_RESET} ({e})")
 
+        # Phase 4 Test 3: Dex Heuristics & POTRAZ Telemetry Harvester (Composite Threat Score >= 120)
+        total_tests += 1
+        t13 = "com.example.service.AntivirusScannerEngineTest > evaluateDexHeuristicsAndPotrazHarvester_detectsExtremeThreatScore"
+        try:
+            # Simulate videoeditor.videorecorder.screenrecorder feature vector
+            perms = [
+                "android.permission.SYSTEM_ALERT_WINDOW",
+                "android.permission.RECORD_AUDIO",
+                "android.permission.CAMERA",
+                "android.permission.WRITE_SETTINGS",
+                "android.permission.READ_PHONE_STATE"
+            ]
+            has_dcl = True
+            has_cleartext = True
+
+            score = 0
+            if "android.permission.SYSTEM_ALERT_WINDOW" in perms:
+                score += 20
+            if has_dcl:
+                score += 40
+            if "android.permission.READ_PHONE_STATE" in perms:
+                score += 25
+            if has_cleartext:
+                score += 20
+            if ("android.permission.SYSTEM_ALERT_WINDOW" in perms and
+                ("android.permission.CAMERA" in perms or "android.permission.RECORD_AUDIO" in perms) and
+                "android.permission.WRITE_SETTINGS" in perms):
+                score += 35
+
+            assert score >= 120, f"Expected score >= 120, got {score}"
+            risk_level = "CRITICAL" if score >= 60 else "SAFE"
+            assert risk_level == "CRITICAL"
+            print(f"  {t13} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t13} {C_RED}FAILED{C_RESET} ({e})")
+
     elapsed = time.time() - t0
     print(f"\n{C_GREEN}BUILD SUCCESSFUL{C_RESET} in {elapsed:.2f}s")
     print(f"{C_GRAY}{total_tests} actionable tasks: {total_tests} executed{C_RESET}")

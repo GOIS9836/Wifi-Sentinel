@@ -32,6 +32,10 @@ object AntivirusScannerEngine {
         "android.permission.WRITE_CALL_LOG",
         "android.permission.PROCESS_OUTGOING_CALLS",
         "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.WRITE_SETTINGS",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.READ_PRIVILEGED_PHONE_STATE",
         "android.permission.ACCESS_BACKGROUND_LOCATION"
     )
 
@@ -168,6 +172,12 @@ object AntivirusScannerEngine {
             if (isSystem) "System" else "Unknown Source"
         }
 
+        val dexHeuristics = inspectDexHeuristics(appInfo?.sourceDir)
+        val hasCleartextFlag = if (appInfo != null) {
+            (appInfo.flags and ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC) != 0
+        } else false
+        val finalCleartext = dexHeuristics.hasCleartextTraffic || hasCleartextFlag
+
         val requestedPermissions = pkg.requestedPermissions ?: emptyArray()
         val dangerousFound = requestedPermissions.filter { it in DANGEROUS_PERMISSIONS }
 
@@ -214,6 +224,35 @@ object AntivirusScannerEngine {
                 reasons.add("Can access or intercept SMS text messages (2FA interception risk)")
             }
 
+            // 7. Dynamic Code Loading (DCL)
+            if (dexHeuristics.hasDynamicCodeLoading) {
+                riskScore += 40
+                reasons.add("Bytecode Alert: DEX Dynamic Code Loading Active (Evades static scanning / downloads runtime classes)")
+            }
+
+            // 8. POTRAZ Chapter 12:07 Hardware / Telephony Identifier Harvesting
+            val hasPhoneState = "android.permission.READ_PHONE_STATE" in requestedPermissions ||
+                    "android.permission.READ_PRIVILEGED_PHONE_STATE" in requestedPermissions
+            if (hasPhoneState || dexHeuristics.hasPotrazIdentifierHarvesting) {
+                riskScore += 25
+                reasons.add("POTRAZ Chapter 12:07 Breach: Hardware/Subscriber Identifier Harvester (IMEI / Device ID / Telephony access)")
+            }
+
+            // 9. Cleartext HTTP Network Exfiltration
+            if (finalCleartext) {
+                riskScore += 20
+                reasons.add("Network Security Violation: Cleartext HTTP endpoints detected (MiTM and wire sniffing exposure on Wi-Fi)")
+            }
+
+            // 10. Multi-vector Tapjacking & Invasive Surveillance
+            val hasCamera = "android.permission.CAMERA" in requestedPermissions
+            val hasAudio = "android.permission.RECORD_AUDIO" in requestedPermissions
+            val hasWriteSettings = "android.permission.WRITE_SETTINGS" in requestedPermissions
+            if (hasOverlay && (hasCamera || hasAudio) && hasWriteSettings) {
+                riskScore += 35
+                reasons.add("Multi-vector Tapjacking & Surveillance: SYSTEM_ALERT_WINDOW combined with Camera/Audio and WRITE_SETTINGS")
+            }
+
             if (installerSource.contains("Sideloaded") || installerSource.contains("Unknown")) {
                 riskScore += 15
                 reasons.add("Installed from untrusted or non-official repository (sideloaded APK)")
@@ -228,6 +267,10 @@ object AntivirusScannerEngine {
             if (hasAccessibility || hasOverlay) {
                 riskScore = 10
             }
+        }
+
+        if (riskScore >= 100) {
+            reasons.add("Extreme Threat Threshold Exceeded: Composite score exceeds 100/100 (Quarantine Recommended)")
         }
 
         val riskLevel = when {
@@ -252,13 +295,71 @@ object AntivirusScannerEngine {
             isSystemApp = isSystem,
             installerSource = installerSource,
             riskLevel = riskLevel,
-            riskScore = riskScore.coerceIn(0, 100),
+            riskScore = riskScore,
             riskReasons = reasons,
             dangerousPermissions = dangerousFound,
             isQuarantined = false,
             isWhitelisted = false,
             appSizeBytes = appSize,
-            targetSdkVersion = appInfo?.targetSdkVersion ?: 34
+            targetSdkVersion = appInfo?.targetSdkVersion ?: 34,
+            hasDynamicCodeLoading = dexHeuristics.hasDynamicCodeLoading,
+            hasCleartextTraffic = finalCleartext,
+            hasPotrazIdentifierHarvesting = dexHeuristics.hasPotrazIdentifierHarvesting || ("android.permission.READ_PHONE_STATE" in requestedPermissions)
+        )
+    }
+
+    data class DexHeuristicResult(
+        val hasDynamicCodeLoading: Boolean = false,
+        val hasCleartextTraffic: Boolean = false,
+        val hasPotrazIdentifierHarvesting: Boolean = false
+    )
+
+    fun inspectDexHeuristics(sourceDir: String?): DexHeuristicResult {
+        if (sourceDir.isNullOrEmpty()) return DexHeuristicResult()
+        val apkFile = File(sourceDir)
+        if (!apkFile.exists() || !apkFile.canRead()) return DexHeuristicResult()
+
+        var dclFound = false
+        var cleartextTraffic = false
+        var potrazHarvesting = false
+
+        try {
+            java.util.zip.ZipFile(apkFile).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.name.endsWith(".dex") && !entry.isDirectory) {
+                        zip.getInputStream(entry).use { stream ->
+                            val buffer = ByteArray(65536)
+                            var prevTail = ""
+                            var bytesRead: Int
+                            while (stream.read(buffer).also { bytesRead = it } != -1) {
+                                val chunk = prevTail + String(buffer, 0, bytesRead, Charsets.ISO_8859_1).lowercase()
+                                if (!dclFound && (chunk.contains("dexclassloader") || chunk.contains("inmemorydexclassloader"))) {
+                                    dclFound = true
+                                }
+                                if (!potrazHarvesting && (chunk.contains("getdeviceid") || chunk.contains("getimei") || chunk.contains("getsubscriberid") || chunk.contains("getsimserialnumber"))) {
+                                    potrazHarvesting = true
+                                }
+                                if (!cleartextTraffic && chunk.contains("http://") && !chunk.contains("http://schemas.android.com")) {
+                                    cleartextTraffic = true
+                                }
+                                prevTail = if (chunk.length > 256) chunk.substring(chunk.length - 256) else chunk
+                                if (dclFound && potrazHarvesting && cleartextTraffic) break
+                            }
+                        }
+                    }
+                    if (dclFound && potrazHarvesting && cleartextTraffic) break
+                }
+            }
+        } catch (e: Exception) {
+            // Graceful fallback for protected/inaccessible paths
+        }
+
+        return DexHeuristicResult(
+            hasDynamicCodeLoading = dclFound,
+            hasCleartextTraffic = cleartextTraffic,
+            hasPotrazIdentifierHarvesting = potrazHarvesting
         )
     }
 
