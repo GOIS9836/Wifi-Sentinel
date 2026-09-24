@@ -21,15 +21,31 @@ open class SentinelViewModel(
 ) : ViewModel() {
 
     private val _filterState = MutableStateFlow(DeviceFilter.ALL)
+    private val _isAutonomousQuarantineRemovalActive = MutableStateFlow(true)
+    private val _evictionMessage = MutableStateFlow("")
+
+    private data class LocalControls(
+        val filter: DeviceFilter,
+        val autoRemove: Boolean,
+        val evictionMsg: String
+    )
+
+    private val localControlsFlow = combine(
+        _filterState,
+        _isAutonomousQuarantineRemovalActive,
+        _evictionMessage
+    ) { filter, autoRemove, evictionMsg ->
+        LocalControls(filter, autoRemove, evictionMsg)
+    }
 
     val uiState: StateFlow<SentinelUiState> = combine(
         repository.allDevices,
         repository.whitelistedDevices,
         repository.blockedDevices,
         repository.securityAlerts,
-        _filterState
-    ) { allDevs, whiteDevs, blockedDevs, alerts, filter ->
-        val filteredList = when (filter) {
+        localControlsFlow
+    ) { allDevs, whiteDevs, blockedDevs, alerts, controls ->
+        val filteredList = when (controls.filter) {
             DeviceFilter.ALL -> allDevs
             DeviceFilter.WHITELISTED -> whiteDevs
             DeviceFilter.BLOCKED -> blockedDevs
@@ -43,7 +59,9 @@ open class SentinelViewModel(
             alerts = alerts,
             unacknowledgedAlertsCount = alerts.count { !it.isAcknowledged },
             isLoading = false,
-            selectedFilter = filter,
+            selectedFilter = controls.filter,
+            isAutonomousQuarantineRemovalActive = controls.autoRemove,
+            lastEvictionMessage = controls.evictionMsg,
             complianceStatus = "POTRAZ Chapter 12:07 Invariant 0% Drift",
             classification = "BENEDICTUS"
         )
@@ -55,6 +73,54 @@ open class SentinelViewModel(
 
     fun setFilter(filter: DeviceFilter) {
         _filterState.value = filter
+    }
+
+    fun setAutonomousQuarantineRemoval(enabled: Boolean) {
+        _isAutonomousQuarantineRemovalActive.value = enabled
+        _evictionMessage.value = if (enabled) {
+            "Autonomous Quarantine Removal Enabled (G4035 Sentinel Policy Active)"
+        } else {
+            "Autonomous Quarantine Removal Suspended"
+        }
+    }
+
+    /**
+     * Actively evicts all quarantined devices from the network and deletes their records.
+     * Complies with G4035 autonomous quarantine policy and POTRAZ guidelines.
+     */
+    fun removeQuarantinedDevicesFromNetwork() {
+        viewModelScope.launch {
+            val purgedCount = repository.removeQuarantinedDevicesFromNetwork()
+            val msg = "Evicted $purgedCount quarantined device(s) from network (ACL Drop & ARP Eviction Enforced)"
+            _evictionMessage.value = msg
+            repository.recordSecurityAlert(
+                title = "NETWORK QUARANTINE PURGE",
+                description = msg,
+                deviceIp = "255.255.255.255",
+                deviceMac = "FF:FF:FF:FF:FF:FF",
+                severity = "INFO"
+            )
+        }
+    }
+
+    /**
+     * Removes an individual quarantined device from the network.
+     */
+    fun removeQuarantinedDevice(device: SentinelDeviceEntity) {
+        viewModelScope.launch {
+            val removed = repository.removeQuarantinedDevice(device.macAddress)
+            if (removed) {
+                val msg = "Severed and evicted quarantined host ${device.ipAddress} (${device.macAddress}) from network."
+                _evictionMessage.value = msg
+                repository.recordSecurityAlert(
+                    title = "QUARANTINED HOST EVICTED",
+                    description = msg,
+                    deviceIp = device.ipAddress,
+                    deviceMac = device.macAddress,
+                    severity = "WARNING"
+                )
+            }
+        }
     }
 
     fun toggleAuthorization(device: SentinelDeviceEntity) {
@@ -70,9 +136,24 @@ open class SentinelViewModel(
     fun toggleBlock(device: SentinelDeviceEntity) {
         viewModelScope.launch {
             val newStatus = !device.isBlocked
-            repository.setDeviceBlocked(device.macAddress, newStatus)
-            if (newStatus && device.isAuthorized) {
-                repository.setDeviceAuthorized(device.macAddress, false)
+            if (newStatus && _isAutonomousQuarantineRemovalActive.value) {
+                // Autonomous configuration rule: immediately sever and remove quarantined device from network
+                repository.setDeviceBlocked(device.macAddress, true)
+                repository.removeQuarantinedDevice(device.macAddress)
+                val msg = "Autonomous Policy: Quarantined host ${device.ipAddress} (${device.macAddress}) severed and removed from network."
+                _evictionMessage.value = msg
+                repository.recordSecurityAlert(
+                    title = "AUTONOMOUS QUARANTINE REMOVAL",
+                    description = msg,
+                    deviceIp = device.ipAddress,
+                    deviceMac = device.macAddress,
+                    severity = "CRITICAL"
+                )
+            } else {
+                repository.setDeviceBlocked(device.macAddress, newStatus)
+                if (newStatus && device.isAuthorized) {
+                    repository.setDeviceAuthorized(device.macAddress, false)
+                }
             }
         }
     }

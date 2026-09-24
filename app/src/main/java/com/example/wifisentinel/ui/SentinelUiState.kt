@@ -14,6 +14,8 @@ data class SentinelUiState(
     val unacknowledgedAlertsCount: Int = 0,
     val isLoading: Boolean = false,
     val selectedFilter: DeviceFilter = DeviceFilter.ALL,
+    val isAutonomousQuarantineRemovalActive: Boolean = true,
+    val lastEvictionMessage: String = "",
     val complianceStatus: String = "POTRAZ Chapter 12:07 Compliant",
     val classification: String = "BENEDICTUS"
 )

@@ -88,7 +88,8 @@ class SentinelViewModelTest {
     }
 
     @Test
-    fun toggleBlock_updatesDeviceBlockedAndClearsAuthorization() = runTest(testDispatcher) {
+    fun toggleBlock_whenAutonomousQuarantineDisabled_updatesDeviceBlockedAndClearsAuthorization() = runTest(testDispatcher) {
+        viewModel.setAutonomousQuarantineRemoval(false)
         val testDev = SentinelDeviceEntity(
             macAddress = "DA:A1:19:00:11:22",
             anonymizedHash = "hash_rogue",
@@ -104,6 +105,44 @@ class SentinelViewModelTest {
         val updated = fakeDeviceDao.getDeviceByMac("DA:A1:19:00:11:22")
         assertTrue("Device must be blocked", updated?.isBlocked == true)
         assertFalse("Authorization must be revoked when blocking", updated?.isAuthorized == true)
+    }
+
+    @Test
+    fun toggleBlock_whenAutonomousQuarantineEnabled_autonomouslyEvictsQuarantinedDevice() = runTest(testDispatcher) {
+        viewModel.setAutonomousQuarantineRemoval(true)
+        val testDev = SentinelDeviceEntity(
+            macAddress = "DA:A1:19:00:11:99",
+            anonymizedHash = "hash_rogue_99",
+            ipAddress = "192.168.1.199",
+            isAuthorized = false,
+            isBlocked = false
+        )
+        fakeDeviceDao.insertOrUpdate(testDev)
+
+        viewModel.toggleBlock(testDev)
+        advanceUntilIdle()
+
+        // Device should be severed and removed from network inventory under autonomous configuration
+        val updated = fakeDeviceDao.getDeviceByMac("DA:A1:19:00:11:99")
+        assertTrue("Device must be removed from network under autonomous configuration", updated == null)
+    }
+
+    @Test
+    fun removeQuarantinedDevicesFromNetwork_purgesAllBlockedEndpoints() = runTest(testDispatcher) {
+        val dev1 = SentinelDeviceEntity(macAddress = "00:11:22:33:44:55", anonymizedHash = "hash_0011", ipAddress = "192.168.1.50", isBlocked = true)
+        val dev2 = SentinelDeviceEntity(macAddress = "AA:BB:CC:DD:EE:00", anonymizedHash = "hash_aabb", ipAddress = "192.168.1.60", isBlocked = false, isAuthorized = true)
+        fakeDeviceDao.insertOrUpdate(dev1)
+        fakeDeviceDao.insertOrUpdate(dev2)
+
+        viewModel.removeQuarantinedDevicesFromNetwork()
+        advanceUntilIdle()
+
+        val remaining = fakeDeviceDao.getAllDevices()
+        val dev1After = fakeDeviceDao.getDeviceByMac("00:11:22:33:44:55")
+        val dev2After = fakeDeviceDao.getDeviceByMac("AA:BB:CC:DD:EE:00")
+
+        assertTrue("Quarantined device must be deleted", dev1After == null)
+        assertTrue("Authorized device must remain", dev2After != null)
     }
 }
 
@@ -161,6 +200,24 @@ private class TestFakeDeviceDao : SentinelDeviceDao {
     override suspend fun deleteDevice(mac: String) {
         map.remove(mac)
         flow.value = map.values.toList()
+    }
+
+    override suspend fun deleteQuarantinedDevices(): Int {
+        val blockedKeys = map.filterValues { it.isBlocked }.keys.toList()
+        blockedKeys.forEach { map.remove(it) }
+        flow.value = map.values.toList()
+        return blockedKeys.size
+    }
+
+    override suspend fun deleteQuarantinedDevice(mac: String): Int {
+        val dev = map[mac]
+        return if (dev != null && dev.isBlocked) {
+            map.remove(mac)
+            flow.value = map.values.toList()
+            1
+        } else {
+            0
+        }
     }
 
     override suspend fun clearAll() {

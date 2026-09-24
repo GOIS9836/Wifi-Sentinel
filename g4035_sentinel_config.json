@@ -26,5 +26,12 @@
       "ip": "192.168.1.229",
       "role": "Nodes-Pergamus Security Core"
     }
-  ]
+  ],
+  "autonomousQuarantinePolicy": {
+    "autoEvictQuarantined": true,
+    "networkDropAction": "DROP_AND_EVICT",
+    "deauthRogueEndpoints": true,
+    "purgeFromNetworkCache": true,
+    "enforceArpEviction": true
+  }
 }

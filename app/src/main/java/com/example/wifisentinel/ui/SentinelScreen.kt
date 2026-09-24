@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -89,7 +91,94 @@ fun SentinelScreen(
             MetricBadge("ALERTS", "${uiState.unacknowledgedAlertsCount}", SocPurple, Modifier.weight(1f))
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Autonomous Configuration & Quarantine Removal Control Card
+        Surface(
+            color = SocCardBackground,
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, if (uiState.isAutonomousQuarantineRemovalActive) SocRed.copy(alpha = 0.5f) else SocBorder, RoundedCornerShape(8.dp))
+        ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "AUTONOMOUS QUARANTINE REMOVAL",
+                            color = if (uiState.isAutonomousQuarantineRemovalActive) SocRed else SocTextSecondary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = if (uiState.isAutonomousQuarantineRemovalActive)
+                                "Active: Auto-evicts & severs quarantined devices from network"
+                            else
+                                "Suspended: Quarantined devices remain in drop state only",
+                            color = SocTextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = uiState.isAutonomousQuarantineRemovalActive,
+                        onCheckedChange = { viewModel.setAutonomousQuarantineRemoval(it) },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = SocRed,
+                            uncheckedThumbColor = SocTextSecondary,
+                            uncheckedTrackColor = SocCardBackground
+                        )
+                    )
+                }
+
+                if (uiState.blockedDevices.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { viewModel.removeQuarantinedDevicesFromNetwork() },
+                        colors = ButtonDefaults.buttonColors(containerColor = SocRed),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 6.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "REMOVE QUARANTINED FROM NETWORK (${uiState.blockedDevices.size})",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
+        }
+
+        if (uiState.lastEvictionMessage.isNotBlank()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Surface(
+                color = SocRed.copy(alpha = 0.12f),
+                shape = RoundedCornerShape(4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, SocRed.copy(alpha = 0.4f), RoundedCornerShape(4.dp))
+            ) {
+                Text(
+                    text = uiState.lastEvictionMessage,
+                    color = SocRed,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         // Filter Tabs Row
         Row(
@@ -121,7 +210,8 @@ fun SentinelScreen(
                 SentinelDeviceCard(
                     device = device,
                     onToggleAuth = { viewModel.toggleAuthorization(device) },
-                    onToggleBlock = { viewModel.toggleBlock(device) }
+                    onToggleBlock = { viewModel.toggleBlock(device) },
+                    onRemoveFromNetwork = { viewModel.removeQuarantinedDevice(device) }
                 )
             }
         }
@@ -164,7 +254,8 @@ private fun FilterButton(title: String, selected: Boolean, onClick: () -> Unit) 
 fun SentinelDeviceCard(
     device: SentinelDeviceEntity,
     onToggleAuth: () -> Unit,
-    onToggleBlock: () -> Unit
+    onToggleBlock: () -> Unit,
+    onRemoveFromNetwork: () -> Unit = {}
 ) {
     Surface(
         color = SocCardBackground,
@@ -231,6 +322,20 @@ fun SentinelDeviceCard(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (device.isBlocked) {
+                    OutlinedButton(
+                        onClick = onRemoveFromNetwork,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SocRed),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(end = 6.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = SocRed, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(text = "Evict Net", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
                 OutlinedButton(
                     onClick = onToggleBlock,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = if (device.isBlocked) SocCyan else SocRed),

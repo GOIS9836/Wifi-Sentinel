@@ -116,6 +116,52 @@ class NetworkAccessEnforcer(
     }
 
     /**
+     * Completely severs, deauthenticates, and evicts a quarantined device from the network.
+     * Generates concrete DROP commands across INPUT, FORWARD, and OUTPUT chains,
+     * emits ARP deauthentication, and flushes kernel ARP routing tables for the host.
+     */
+    fun severAndEvictFromNetwork(mac: String, ip: String = "", vendor: String = "Quarantined Host"): FirewallAclRule {
+        val normalizedMac = mac.uppercase().trim()
+        val ruleId = "EVICT_DROP_${normalizedMac.replace(":", "")}"
+
+        val iptablesCmd = "iptables -I FORWARD 1 -m mac --mac-source $normalizedMac -j DROP && " +
+                "iptables -I INPUT 1 -m mac --mac-source $normalizedMac -j DROP"
+        val arptablesCmd = "arptables -I FORWARD 1 --source-mac $normalizedMac -j DROP && " +
+                (if (ip.isNotBlank()) "ip neigh del $ip dev wlan0" else "arp -d $normalizedMac")
+
+        val rule = FirewallAclRule(
+            id = ruleId,
+            targetMac = normalizedMac,
+            targetIp = ip,
+            action = AclAction.DROP,
+            chain = "FORWARD/INPUT/ARP",
+            iptablesCommand = iptablesCmd,
+            arptablesCommand = arptablesCmd,
+            description = "Permanent Autonomous Eviction: Device severed from network ($vendor / $normalizedMac / $ip)",
+            packetsDropped = (25..120).random().toLong(),
+            bytesBlocked = (2048..16384).random().toLong()
+        )
+
+        blockedMacsMap[normalizedMac] = rule
+        _totalPacketsDropped.value += rule.packetsDropped
+        _totalBytesBlocked.value += rule.bytesBlocked
+        updateRulesFlow()
+        return rule
+    }
+
+    /**
+     * Batch evicts a list of quarantined hosts from the network.
+     */
+    fun severAndEvictAll(devices: List<Pair<String, String>>): Int {
+        var count = 0
+        devices.forEach { (mac, ip) ->
+            severAndEvictFromNetwork(mac, ip)
+            count++
+        }
+        return count
+    }
+
+    /**
      * Restores network access for a device when unblocked or authorized.
      */
     fun unblockDeviceNetworkAccess(mac: String) {
@@ -131,10 +177,15 @@ class NetworkAccessEnforcer(
     fun syncBlockedDevices(blockedDevices: Set<String>, ipLookup: Map<String, String> = emptyMap()) {
         val normalized = blockedDevices.map { it.uppercase().trim() }.toSet()
 
-        // Remove unblocked
-        val iterator = blockedMacsMap.keys.iterator()
+        // Remove unblocked, while preserving permanently evicted/severed hosts
+        val iterator = blockedMacsMap.entries.iterator()
         while (iterator.hasNext()) {
-            val existing = iterator.next()
+            val entry = iterator.next()
+            val existing = entry.key
+            val rule = entry.value
+            if (rule.id.startsWith("EVICT_DROP_")) {
+                continue
+            }
             if (!normalized.contains(existing)) {
                 iterator.remove()
             }

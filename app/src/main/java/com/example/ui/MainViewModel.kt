@@ -326,6 +326,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     val isExecutingScheduledScan: StateFlow<Boolean> = _isExecutingScheduledScan.asStateFlow()
 
     // --- SECURITY DASHBOARD, RISK METRICS & THREAT CONTROLS ---
+    private val _isAutonomousQuarantineRemovalActive = MutableStateFlow(true)
+    val isAutonomousQuarantineRemovalActive: StateFlow<Boolean> = _isAutonomousQuarantineRemovalActive.asStateFlow()
+
+    fun setAutonomousQuarantineRemoval(enabled: Boolean) {
+        _isAutonomousQuarantineRemovalActive.value = enabled
+        if (enabled) {
+            removeQuarantinedDevicesFromNetwork()
+        }
+    }
+
     private val _scanFrequencySeconds = MutableStateFlow(10)
     val scanFrequencySeconds: StateFlow<Int> = _scanFrequencySeconds.asStateFlow()
 
@@ -618,6 +628,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
 
                             if (shouldBlock && !isFilteredBySanitizer) {
                                 repository.setDeviceBlocked(dev.macAddress, true)
+                                if (_isAutonomousQuarantineRemovalActive.value) {
+                                    networkAccessEnforcer.severAndEvictFromNetwork(dev.macAddress, dev.ip, dev.vendor)
+                                    viewModelScope.launch {
+                                        repository.deleteDevice(dev.macAddress)
+                                    }
+                                }
                                 dev.copy(isBlocked = true)
                             } else if ((_isZeroFpEngineActive.value || _guardUiState.value.fpFilterEnabled) && (isBenignPrivateMac || isFilteredBySanitizer) && !dev.isAuthorized && !dev.isBlocked) {
                                 dev.copy(
@@ -631,9 +647,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                         updated
                     }
 
+                    val activeDevicesForProcessing = if (_isAutonomousQuarantineRemovalActive.value) {
+                        processedDevices.filterNot { it.isBlocked }
+                    } else {
+                        processedDevices
+                    }
+
                     val (finalDevices, violations) = if (_isZeroToleranceDuplicationActive.value) {
                         ZeroToleranceDuplicationGuard.enforceZeroDuplication(
-                            devices = processedDevices,
+                            devices = activeDevicesForProcessing,
                             expectedSubnetBase = _wifiState.value.ipAddress.substringBeforeLast("."),
                             primaryGatewayIp = _lockedGatewayIp.value,
                             primaryGatewayMac = _lockedGatewayMac.value
@@ -1382,7 +1404,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     fun quarantineDevice(device: DiscoveredDevice) {
         val newBlocked = !device.isBlocked
         if (newBlocked) {
-            networkAccessEnforcer.blockDeviceNetworkAccess(device.macAddress, device.ip, device.vendor)
+            if (_isAutonomousQuarantineRemovalActive.value) {
+                // Autonomous configuration rule: immediately sever network access and evict quarantined device
+                networkAccessEnforcer.severAndEvictFromNetwork(device.macAddress, device.ip, device.vendor)
+                viewModelScope.launch {
+                    repository.deleteDevice(device.macAddress)
+                    repository.recordSecurityAlert(
+                        title = "AUTONOMOUS QUARANTINE REMOVAL",
+                        description = "Autonomous Enforcement: Quarantined host ${device.ip} (${device.macAddress}) severed and evicted from network.",
+                        deviceIp = device.ip,
+                        deviceMac = device.macAddress,
+                        severity = "CRITICAL"
+                    )
+                }
+                _discoveredDevices.value = _discoveredDevices.value.filterNot { it.macAddress.equals(device.macAddress, ignoreCase = true) }
+                triggerIntruderHapticAlert()
+                return
+            } else {
+                networkAccessEnforcer.blockDeviceNetworkAccess(device.macAddress, device.ip, device.vendor)
+            }
         } else {
             networkAccessEnforcer.unblockDeviceNetworkAccess(device.macAddress)
         }
@@ -1401,6 +1441,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
             if (newBlocked) {
                 triggerIntruderHapticAlert()
             }
+        }
+    }
+
+    /**
+     * Completely severs, deauthenticates, and removes all quarantined devices from the network.
+     * Complies with G4035 autonomous quarantine policy and POTRAZ guidelines.
+     */
+    fun removeQuarantinedDevicesFromNetwork() {
+        viewModelScope.launch {
+            val blockedSubnet = _discoveredDevices.value.filter { it.isBlocked }
+            val blockedUnethical = _unethicalDevices.value.filter { it.isQuarantined }
+            val blockedGateways = _managedGateways.value.filter { it.isQuarantined }
+
+            // 1. Enforce kernel firewall DROP and ARP cache eviction
+            blockedSubnet.forEach { dev ->
+                networkAccessEnforcer.severAndEvictFromNetwork(dev.macAddress, dev.ip, dev.vendor)
+                repository.deleteDevice(dev.macAddress)
+            }
+            blockedUnethical.forEach { threat ->
+                networkAccessEnforcer.severAndEvictFromNetwork(threat.mac, threat.ip, threat.threatType.title)
+                repository.deleteDevice(threat.mac)
+            }
+            blockedGateways.forEach { gw ->
+                networkAccessEnforcer.severAndEvictFromNetwork(gw.mac, gw.ip, gw.vendor)
+                repository.deleteDevice(gw.mac)
+            }
+
+            // 2. Evict and purge from active network inventories
+            _discoveredDevices.value = _discoveredDevices.value.filterNot { it.isBlocked }
+            _unethicalDevices.value = _unethicalDevices.value.filterNot { it.isQuarantined }
+            _managedGateways.value = _managedGateways.value.filterNot { it.isQuarantined }
+
+            val totalPurged = blockedSubnet.size + blockedUnethical.size + blockedGateways.size
+            repository.recordSecurityAlert(
+                title = "NETWORK QUARANTINE PURGE EXECUTED",
+                description = "Autonomous Quarantine Policy: $totalPurged quarantined endpoint(s) severed from router routing tables and purged from network.",
+                deviceIp = "255.255.255.255",
+                deviceMac = "FF:FF:FF:FF:FF:FF",
+                severity = "INFO"
+            )
+        }
+    }
+
+    /**
+     * Removes an individual quarantined device from the network.
+     */
+    fun removeQuarantinedDevice(device: DiscoveredDevice) {
+        viewModelScope.launch {
+            networkAccessEnforcer.severAndEvictFromNetwork(device.macAddress, device.ip, device.vendor)
+            repository.deleteDevice(device.macAddress)
+            _discoveredDevices.value = _discoveredDevices.value.filterNot { it.macAddress.equals(device.macAddress, ignoreCase = true) }
+            repository.recordSecurityAlert(
+                title = "QUARANTINED DEVICE REMOVED FROM NETWORK",
+                description = "Host at ${device.ip} (${device.macAddress}) severed via kernel ACL and evicted from network tables.",
+                deviceIp = device.ip,
+                deviceMac = device.macAddress,
+                severity = "WARNING"
+            )
         }
     }
 

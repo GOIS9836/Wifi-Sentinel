@@ -55,6 +55,12 @@ interface SentinelDeviceDao {
     @Query("DELETE FROM sentinel_devices WHERE macAddress = :mac")
     suspend fun deleteDevice(mac: String)
 
+    @Query("DELETE FROM sentinel_devices WHERE isBlocked = 1")
+    suspend fun deleteQuarantinedDevices(): Int
+
+    @Query("DELETE FROM sentinel_devices WHERE macAddress = :mac AND isBlocked = 1")
+    suspend fun deleteQuarantinedDevice(mac: String): Int
+
     @Query("DELETE FROM sentinel_devices")
     suspend fun clearAll()
 }

@@ -42,6 +42,12 @@ interface NetworkDeviceDao {
 
     @Query("DELETE FROM known_devices WHERE macAddress = :mac")
     suspend fun deleteDevice(mac: String)
+
+    @Query("DELETE FROM known_devices WHERE isBlocked = 1")
+    suspend fun deleteBlockedDevices(): Int
+
+    @Query("DELETE FROM known_devices WHERE macAddress = :mac AND isBlocked = 1")
+    suspend fun deleteBlockedDevice(mac: String): Int
 }
 
 @Dao

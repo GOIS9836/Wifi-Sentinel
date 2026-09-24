@@ -104,9 +104,49 @@ class SentinelRepositoryTest {
         val unackCount = repository.unacknowledgedAlertsCount.first()
         assertEquals(1, unackCount)
 
-        repository.acknowledgeAlert(alert.id)
+        val savedAlert = repository.securityAlerts.first().first()
+        repository.acknowledgeAlert(savedAlert.id)
         val afterAckCount = repository.unacknowledgedAlertsCount.first()
         assertEquals(0, afterAckCount)
+    }
+
+    @Test
+    fun removeQuarantinedDevicesFromNetwork_removesAllBlockedDevices() = runTest {
+        val mac1 = "11:22:33:44:55:66"
+        val mac2 = "AA:BB:CC:DD:EE:FF"
+        val mac3 = "77:88:99:AA:BB:CC"
+
+        repository.ingestDiscoveredDevice(mac1, "192.168.1.10", "Host1")
+        repository.ingestDiscoveredDevice(mac2, "192.168.1.20", "Host2")
+        repository.ingestDiscoveredDevice(mac3, "192.168.1.30", "Host3")
+
+        // Block two devices
+        repository.setDeviceBlocked(mac1, true)
+        repository.setDeviceBlocked(mac2, true)
+        repository.setDeviceAuthorized(mac3, true)
+
+        assertEquals(2, repository.blockedDevices.first().size)
+
+        // Remove quarantined devices from network
+        val removedCount = repository.removeQuarantinedDevicesFromNetwork()
+        assertEquals(2, removedCount)
+        assertEquals(0, repository.blockedDevices.first().size)
+
+        // Authorized device remains
+        val remaining = repository.allDevices.first()
+        assertEquals(1, remaining.size)
+        assertEquals(mac3, remaining[0].macAddress)
+    }
+
+    @Test
+    fun removeQuarantinedDevice_removesSingleBlockedDevice() = runTest {
+        val mac = "AA:BB:CC:11:22:33"
+        repository.ingestDiscoveredDevice(mac, "192.168.1.45", "Target")
+        repository.setDeviceBlocked(mac, true)
+
+        val removed = repository.removeQuarantinedDevice(mac)
+        assertTrue(removed)
+        assertTrue(repository.blockedDevices.first().isEmpty())
     }
 }
 
@@ -182,6 +222,24 @@ private class FakeSentinelDeviceDao : SentinelDeviceDao {
     override suspend fun deleteDevice(mac: String) {
         devices.remove(mac)
         emit()
+    }
+
+    override suspend fun deleteQuarantinedDevices(): Int {
+        val blockedKeys = devices.filterValues { it.isBlocked }.keys.toList()
+        blockedKeys.forEach { devices.remove(it) }
+        emit()
+        return blockedKeys.size
+    }
+
+    override suspend fun deleteQuarantinedDevice(mac: String): Int {
+        val dev = devices[mac]
+        return if (dev != null && dev.isBlocked) {
+            devices.remove(mac)
+            emit()
+            1
+        } else {
+            0
+        }
     }
 
     override suspend fun clearAll() {

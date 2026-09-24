@@ -54,6 +54,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -123,6 +124,7 @@ fun SecurityDashboardScreen(
     onNavigateToSentry: () -> Unit = {}
 ) {
     val quarantinedCount by viewModel.totalQuarantinedCount.collectAsStateWithLifecycle()
+    val isAutonomousQuarantineRemovalActive by viewModel.isAutonomousQuarantineRemovalActive.collectAsStateWithLifecycle()
     val scanFrequency by viewModel.scanFrequencySeconds.collectAsStateWithLifecycle()
     val riskAssessment by viewModel.networkRiskAssessment.collectAsStateWithLifecycle()
     val isCalculatingRisk by viewModel.isCalculatingRiskScore.collectAsStateWithLifecycle()
@@ -325,6 +327,9 @@ fun SecurityDashboardScreen(
             quarantinedCount = quarantinedCount,
             unethicalQuarantined = unethicalDevices.count { it.isQuarantined },
             gatewayQuarantined = allGateways.count { it.isQuarantined },
+            isAutonomousRemovalActive = isAutonomousQuarantineRemovalActive,
+            onToggleAutonomousRemoval = { viewModel.setAutonomousQuarantineRemoval(it) },
+            onRemoveQuarantinedFromNetwork = { viewModel.removeQuarantinedDevicesFromNetwork() },
             onDismiss = { showQuarantineBreakdownDialog = false }
         )
     }
@@ -1710,6 +1715,9 @@ private fun QuarantinedDevicesBreakdownDialog(
     quarantinedCount: Int,
     unethicalQuarantined: Int,
     gatewayQuarantined: Int,
+    isAutonomousRemovalActive: Boolean = true,
+    onToggleAutonomousRemoval: (Boolean) -> Unit = {},
+    onRemoveQuarantinedFromNetwork: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     AlertDialog(
@@ -1746,6 +1754,53 @@ private fun QuarantinedDevicesBreakdownDialog(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("• Subnet Intruders Quarantined:", color = TextSecondary, fontSize = 12.sp)
                     Text("${quarantinedCount - unethicalQuarantined - gatewayQuarantined}", color = CyberCyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+                HorizontalDivider(color = CyberBorder)
+
+                // Autonomous Quarantine Policy Switch
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Autonomous Quarantine Eviction", color = TextPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(
+                            if (isAutonomousRemovalActive) "Auto-evicts & severs quarantined devices from network"
+                            else "Suspended: drops packets without evicting tables",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Switch(
+                        checked = isAutonomousRemovalActive,
+                        onCheckedChange = onToggleAutonomousRemoval,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = CyberRed,
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = CyberSurface
+                        )
+                    )
+                }
+
+                if (quarantinedCount > 0) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Button(
+                        onClick = {
+                            onRemoveQuarantinedFromNetwork()
+                            onDismiss()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberRed),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("EVICT ALL QUARANTINED FROM NETWORK", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                    }
                 }
             }
         },

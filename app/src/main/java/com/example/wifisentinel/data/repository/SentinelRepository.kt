@@ -110,6 +110,14 @@ class SentinelRepository(
         alertDao.markFalsePositive(alertId)
     }
 
+    suspend fun removeQuarantinedDevicesFromNetwork(): Int {
+        return deviceDao.deleteQuarantinedDevices()
+    }
+
+    suspend fun removeQuarantinedDevice(mac: String): Boolean {
+        return deviceDao.deleteQuarantinedDevice(mac.trim().uppercase()) > 0
+    }
+
     suspend fun clearAllData() {
         deviceDao.clearAll()
         alertDao.clearAll()
