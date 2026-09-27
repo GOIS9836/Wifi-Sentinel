@@ -175,18 +175,12 @@ class WifiScannerService(private val context: Context) {
             )
         )
 
-        // Probe active subnet IP addresses in parallel
-        val candidates = (2..35).map { "$subnetBase.$it" }.filter { it != localIp && it != gatewayIp }
+        // Probe active subnet IP addresses in parallel using ICMP and TCP port probing
+        val candidates = ((2..60) + (100..130)).map { "$subnetBase.$it" }.filter { it != localIp && it != gatewayIp }
         val pingResults = coroutineScope {
             candidates.map { ip ->
                 async {
-                    val reachable = try {
-                        val inet = InetAddress.getByName(ip)
-                        inet.isReachable(120)
-                    } catch (e: Exception) {
-                        false
-                    }
-                    if (reachable) ip else null
+                    if (isHostReachable(ip)) ip else null
                 }
             }.awaitAll().filterNotNull()
         }
@@ -196,19 +190,22 @@ class WifiScannerService(private val context: Context) {
             val isAuth = authorizedMacs.contains(mac)
             val isRandom = isLocallyAdministeredMac(mac)
             val isBlocked = normalizedBlockedMacs.contains(mac.uppercase())
+            val iotProfile = IotChipsetSecurityEngine.profileMac(mac)
+            val isRogueIot = iotProfile.isIotChipset && !isAuth
+
             discovered.add(
                 DiscoveredDevice(
                     ip = activeIp,
                     macAddress = mac,
                     vendor = resolveVendor(mac),
-                    customName = if (isAuth) "Verified Device" else "",
+                    customName = if (isAuth) "Verified Device" else if (iotProfile.isIotChipset) iotProfile.chipsetFamily else "",
                     isAuthorized = isAuth,
                     isBlocked = isBlocked,
                     responseTimeMs = if (isBlocked) 0L else (8..45).random().toLong(),
                     threatLevel = if (isAuth) ThreatLevel.SAFE else ThreatLevel.UNAUTHORIZED_INTRUDER,
                     isRandomizedMac = isRandom,
-                    confidencePercent = if (isAuth) 99 else if (isRandom) 76 else 99,
-                    corroborationVector = if (isBlocked) "Firewall Isolation Active • Zero Network Access" else if (isAuth) "Trusted Baseline" else if (isRandom) "Private MAC / Active ARP" else "Dual-Probe Corroborated"
+                    confidencePercent = if (isAuth) 99 else if (isRogueIot) 100 else if (isRandom) 76 else 99,
+                    corroborationVector = if (isBlocked) "Firewall Isolation Active • Zero Network Access" else if (isAuth) "Trusted Baseline" else if (isRogueIot) iotProfile.potrazComplianceAdvisory else if (isRandom) "Private MAC / Active ARP" else "Dual-Probe Corroborated"
                 )
             )
         }
@@ -219,54 +216,22 @@ class WifiScannerService(private val context: Context) {
                 val isAuth = authorizedMacs.contains(mac)
                 val isRandom = isLocallyAdministeredMac(mac)
                 val isBlocked = normalizedBlockedMacs.contains(mac.uppercase())
+                val iotProfile = IotChipsetSecurityEngine.profileMac(mac)
+                val isRogueIot = iotProfile.isIotChipset && !isAuth
+
                 discovered.add(
                     DiscoveredDevice(
                         ip = ip,
                         macAddress = mac,
                         vendor = resolveVendor(mac),
+                        customName = if (isAuth) "Verified Device" else if (iotProfile.isIotChipset) iotProfile.chipsetFamily else "",
                         isAuthorized = isAuth,
                         isBlocked = isBlocked,
                         responseTimeMs = if (isBlocked) 0L else 15L,
                         threatLevel = if (isAuth) ThreatLevel.SAFE else ThreatLevel.UNAUTHORIZED_INTRUDER,
                         isRandomizedMac = isRandom,
-                        confidencePercent = if (isAuth) 99 else if (isRandom) 78 else 99,
-                        corroborationVector = if (isBlocked) "Firewall Isolation Active • Zero Network Access" else if (isAuth) "Trusted Baseline" else "ARP Cache Match"
-                    )
-                )
-            }
-        }
-
-        // If subnet isolation or sandbox prevents pinging other hosts, inject standard network neighbors
-        // so the user can test real-time intruder detection, authorization, and notifications
-        if (discovered.size <= 2) {
-            val mockNeighbors = listOf(
-                Triple("22", "B4:FB:E4:91:22:A1", Pair("Apple MacBook Pro", false)),
-                Triple("45", "D8:3A:DD:62:84:90", Pair("Espressif IoT Smart Bulb", true)),
-                Triple("119", "E4:5F:01:3B:11:FE", Pair("Unknown Kali Linux Device", false)),
-                Triple("88", "50:EC:50:9A:33:04", Pair("Samsung Smart TV 4K", true)),
-                Triple("14", "7A:B4:9C:12:34:56", Pair("iPhone (Private Wi-Fi Address)", false))
-            )
-            for (item in mockNeighbors) {
-                val ip = "$subnetBase.${item.first}"
-                val mac = item.second
-                val vendor = item.third.first
-                val defaultAuth = item.third.second
-                val isAuth = authorizedMacs.contains(mac) || (authorizedMacs.isEmpty() && defaultAuth)
-                val isRandom = isLocallyAdministeredMac(mac)
-                val isBlocked = normalizedBlockedMacs.contains(mac.uppercase())
-                discovered.add(
-                    DiscoveredDevice(
-                        ip = ip,
-                        macAddress = mac,
-                        vendor = vendor,
-                        customName = if (isAuth) vendor else if (isRandom) "Private Phone (Random MAC)" else "Unidentified Host",
-                        isAuthorized = isAuth,
-                        isBlocked = isBlocked,
-                        responseTimeMs = if (isBlocked) 0L else Random.nextLong(14, 60),
-                        threatLevel = if (isAuth) ThreatLevel.SAFE else ThreatLevel.UNAUTHORIZED_INTRUDER,
-                        isRandomizedMac = isRandom,
-                        confidencePercent = if (isAuth) 99 else if (isRandom) 72 else 99,
-                        corroborationVector = if (isBlocked) "Firewall Isolation Active • Zero Network Access" else if (isAuth) "Verified Safe Host" else if (isRandom) "Private Randomized MAC (Zero-FP Flag)" else "Subnet Intrusion Corroborated"
+                        confidencePercent = if (isAuth) 99 else if (isRogueIot) 100 else if (isRandom) 78 else 99,
+                        corroborationVector = if (isBlocked) "Firewall Isolation Active • Zero Network Access" else if (isAuth) "Trusted Baseline" else if (isRogueIot) iotProfile.potrazComplianceAdvisory else "ARP Cache Match"
                     )
                 )
             }
@@ -280,6 +245,29 @@ class WifiScannerService(private val context: Context) {
             primaryGatewayMac = arpMap[gatewayIp] ?: "00:1A:2B:3C:4D:01"
         )
         deduped
+    }
+
+    private fun isHostReachable(ip: String): Boolean {
+        try {
+            val inet = InetAddress.getByName(ip)
+            if (inet.isReachable(60)) return true
+        } catch (_: Exception) {}
+
+        val probePorts = intArrayOf(80, 443, 53, 8080, 22)
+        for (port in probePorts) {
+            try {
+                java.net.Socket().use { socket ->
+                    socket.connect(java.net.InetSocketAddress(ip, port), 40)
+                    return true
+                }
+            } catch (_: java.net.ConnectException) {
+                // Connection refused = Host replied with TCP RST = Host is alive!
+                return true
+            } catch (_: Exception) {
+                // Timeout or host unreachable
+            }
+        }
+        return false
     }
 
     private fun readArpTable(): Map<String, String> {
@@ -308,15 +296,15 @@ class WifiScannerService(private val context: Context) {
 
     private fun resolveVendor(mac: String, isRouter: Boolean = false): String {
         if (isRouter) return "Netgear / ASUS Wi-Fi 6 Router"
+        val iotProfile = IotChipsetSecurityEngine.profileMac(mac)
+        if (iotProfile.isIotChipset) {
+            return "${iotProfile.vendorName} (${iotProfile.chipsetFamily})"
+        }
         val prefix = mac.take(8).uppercase()
         return when {
-            prefix.startsWith("74:AC:B9") -> "Espressif Inc. (IoT Chipset)"
-            prefix.startsWith("B8:27:EB") -> "Raspberry Pi Foundation"
             prefix.startsWith("00:1A:2B") -> "Ayecom Technology"
             prefix.startsWith("F0:99:BF") || prefix.startsWith("B4:FB:E4") || prefix.startsWith("F0:18:98") || prefix.startsWith("AC:BC:32") -> "Apple Inc."
             prefix.startsWith("50:EC:50") || prefix.startsWith("D4:E6:B7") || prefix.startsWith("94:35:0A") -> "Samsung Electronics"
-            prefix.startsWith("D8:3A:DD") || prefix.startsWith("24:0A:C4") || prefix.startsWith("30:AE:A4") -> "Espressif IoT Systems"
-            prefix.startsWith("E4:5F:01") || prefix.startsWith("DC:A6:32") -> "Raspberry Pi Foundation"
             prefix.startsWith("A4:2B:B0") -> "Cisco / Meraki"
             prefix.startsWith("9C:76:13") || prefix.startsWith("3C:52:82") -> "Intel Wireless"
             prefix.startsWith("68:54:5A") || prefix.startsWith("FC:A1:83") -> "Google Nest"
@@ -327,7 +315,7 @@ class WifiScannerService(private val context: Context) {
     private fun generatePseudoMac(ip: String): String {
         val lastOctet = ip.substringAfterLast(".").toIntOrNull() ?: 10
         val hex = lastOctet.toString(16).padStart(2, '0').uppercase()
-        return "74:AC:B9:40:12:$hex"
+        return "02:00:5E:7F:01:$hex"
     }
 
     private fun getLocalIpAddress(): String? {

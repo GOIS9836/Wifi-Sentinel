@@ -67,8 +67,8 @@ object NetworkReportGenerator {
             deductions += (duplicationStatus.totalViolations * 15).coerceAtMost(30)
         }
 
-        // Recent Critical Incidents
-        val recentCriticalCount = alerts.count { it.severity.equals("CRITICAL", ignoreCase = true) }
+        // Recent Critical Incidents (unacknowledged)
+        val recentCriticalCount = alerts.count { !it.isAcknowledged && it.severity.equals("CRITICAL", ignoreCase = true) }
         deductions += (recentCriticalCount * 6).coerceAtMost(24)
 
         val healthScore = (100 - deductions).coerceIn(15, 100)

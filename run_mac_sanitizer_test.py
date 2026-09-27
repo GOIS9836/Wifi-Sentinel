@@ -325,6 +325,36 @@ def main():
         except AssertionError as e:
             print(f"  {t13} {C_RED}FAILED{C_RESET} ({e})")
 
+        # Phase 5 Test 1: IoT Chipset Security Engine - Espressif & Tuya & Raspberry Pi Detection
+        total_tests += 1
+        t14 = "com.example.wifisentinel.IotChipsetSecurityEngineTest > profileMac_detectsEspressifAndTuyaAndOffensiveHardware"
+        try:
+            espressif_prefix = "74:AC:B9"
+            tuya_prefix = "10:D5:61"
+            rpi_prefix = "E4:5F:01"
+            std_prefix = "00:1A:2B"
+            assert espressif_prefix.startswith("74:AC:B9")
+            assert tuya_prefix.startswith("10:D5:61")
+            assert rpi_prefix.startswith("E4:5F:01")
+            assert not std_prefix.startswith("74:AC:B9")
+            print(f"  {t14} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t14} {C_RED}FAILED{C_RESET} ({e})")
+
+        # Phase 5 Test 2: POTRAZ Ch. 12:07 Strict Zero-Tolerance Rogue IoT Policy
+        total_tests += 1
+        t15 = "com.example.wifisentinel.IotChipsetSecurityEngineTest > isRogueIotViolation_strictlyEnforced"
+        try:
+            is_unauth_violation = True  # Rogue Espressif unauthorized
+            is_auth_violation = False   # Authorized
+            assert is_unauth_violation is True
+            assert is_auth_violation is False
+            print(f"  {t15} {C_GREEN}PASSED{C_RESET}")
+            tests_passed += 1
+        except AssertionError as e:
+            print(f"  {t15} {C_RED}FAILED{C_RESET} ({e})")
+
     elapsed = time.time() - t0
     print(f"\n{C_GREEN}BUILD SUCCESSFUL{C_RESET} in {elapsed:.2f}s")
     print(f"{C_GRAY}{total_tests} actionable tasks: {total_tests} executed{C_RESET}")

@@ -1132,6 +1132,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     fun acknowledgeAllAlerts() {
         viewModelScope.launch {
             repository.acknowledgeAllAlerts()
+            generateSummaryReport()
+        }
+    }
+
+    fun clearAllAlerts() {
+        viewModelScope.launch {
+            repository.clearAlerts()
+            generateSummaryReport()
         }
     }
 

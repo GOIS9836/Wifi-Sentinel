@@ -44,6 +44,6 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WiFi-Sentinel-v1.0.1-API34
+          name: WiFi-Sentinel-v1.0.2-API34
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
