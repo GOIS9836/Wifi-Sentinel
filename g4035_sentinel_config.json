@@ -7,6 +7,13 @@
       "ssid": "G_4035",
       "subnetMask": "255.255.255.0",
       "isPrimary": true
+    },
+    {
+      "gatewayIp": "192.168.3.1",
+      "label": "Starlink Additional Gateway",
+      "ssid": "Starlink",
+      "subnetMask": "255.255.255.0",
+      "isPrimary": false
     }
   ],
   "whitelistedMacs": [
@@ -29,6 +36,14 @@
     {
       "ip": "192.168.1.189",
       "role": "Authorized Lenovo IdeaPad (Linux Mint: libertycuca9836@ideapad)"
+    },
+    {
+      "ip": "192.168.3.1",
+      "role": "Starlink Additional Gateway Infrastructure"
+    },
+    {
+      "ip": "192.168.3.229",
+      "role": "Nodes-Pergamus Security Core (Starlink Segment)"
     }
   ],
   "autonomousQuarantinePolicy": {
@@ -37,5 +52,29 @@
     "deauthRogueEndpoints": true,
     "purgeFromNetworkCache": true,
     "enforceArpEviction": true
+  },
+  "iotSecurityPolicy": {
+    "strictZeroToleranceIot": true,
+    "blockUnverifiedMicrocontrollers": true,
+    "quarantineEspressifEsp32": true,
+    "quarantineTuyaRealtek": true,
+    "quarantineRaspberryPiAuditHardware": true,
+    "isolateIotSubnetVlan": true,
+    "blockIotCloudTelemetry": true,
+    "enforceProtocolsBlocked": [
+      {"port": 1883, "protocol": "MQTT", "action": "DROP_AND_LOG"},
+      {"port": 8883, "protocol": "MQTTS", "action": "INSPECT_OR_DROP"},
+      {"port": 502,  "protocol": "MODBUS", "action": "DROP_ALL"},
+      {"port": 1900, "protocol": "SSDP", "action": "BLOCK_MULTICAST"},
+      {"port": 5353, "protocol": "MDNS", "action": "CONTAIN_LOCAL_ONLY"}
+    ],
+    "iotSinkholeDomains": [
+      "iot.tuya.com",
+      "api.tuya.com",
+      "a1.tuya.com",
+      "mqtt.espressif.com",
+      "iot.mediatek.com",
+      "iot.tendacn.com"
+    ]
   }
 }
