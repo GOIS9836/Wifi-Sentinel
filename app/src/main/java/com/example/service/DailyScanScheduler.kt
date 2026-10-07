@@ -24,11 +24,15 @@ object DailyScanScheduler {
     private const val KEY_SCAN_AV = "key_scan_antivirus"
     private const val KEY_SCAN_JUNK = "key_scan_junk"
     private const val KEY_AUTO_CLEAN_SAFE = "key_auto_clean_safe"
+    private const val KEY_AUTO_QUARANTINE_UNSAFE = "key_auto_quarantine_unsafe"
     private const val KEY_LAST_RUN_TIMESTAMP = "key_last_run_timestamp"
     private const val KEY_LAST_SCANNED_APPS = "key_last_scanned_apps"
     private const val KEY_LAST_RUN_THREATS = "key_last_run_threats"
+    private const val KEY_LAST_RUN_QUARANTINED_APPS = "key_last_run_quarantined_apps"
     private const val KEY_LAST_RUN_JUNK_BYTES = "key_last_run_junk_bytes"
     private const val KEY_LAST_RUN_SUMMARY = "key_last_run_summary"
+    private const val KEY_QUARANTINED_PACKAGES = "key_quarantined_packages"
+    private const val KEY_WHITELISTED_PACKAGES = "key_whitelisted_packages"
 
     private const val ALARM_REQUEST_CODE = 9009
 
@@ -48,9 +52,11 @@ object DailyScanScheduler {
             scanAntivirus = prefs.getBoolean(KEY_SCAN_AV, true),
             scanJunkCleaner = prefs.getBoolean(KEY_SCAN_JUNK, true),
             autoCleanSafeJunk = prefs.getBoolean(KEY_AUTO_CLEAN_SAFE, true),
+            autoQuarantineUnsafeApps = prefs.getBoolean(KEY_AUTO_QUARANTINE_UNSAFE, true),
             lastRunTimestamp = prefs.getLong(KEY_LAST_RUN_TIMESTAMP, 0L),
             lastScannedAppsCount = prefs.getInt(KEY_LAST_SCANNED_APPS, 0),
             lastRunThreatsCount = prefs.getInt(KEY_LAST_RUN_THREATS, 0),
+            lastRunQuarantinedAppsCount = prefs.getInt(KEY_LAST_RUN_QUARANTINED_APPS, 0),
             lastRunJunkBytes = prefs.getLong(KEY_LAST_RUN_JUNK_BYTES, 0L),
             lastRunSummary = prefs.getString(KEY_LAST_RUN_SUMMARY, "") ?: ""
         )
@@ -68,9 +74,11 @@ object DailyScanScheduler {
             .putBoolean(KEY_SCAN_AV, settings.scanAntivirus)
             .putBoolean(KEY_SCAN_JUNK, settings.scanJunkCleaner)
             .putBoolean(KEY_AUTO_CLEAN_SAFE, settings.autoCleanSafeJunk)
+            .putBoolean(KEY_AUTO_QUARANTINE_UNSAFE, settings.autoQuarantineUnsafeApps)
             .putLong(KEY_LAST_RUN_TIMESTAMP, settings.lastRunTimestamp)
             .putInt(KEY_LAST_SCANNED_APPS, settings.lastScannedAppsCount)
             .putInt(KEY_LAST_RUN_THREATS, settings.lastRunThreatsCount)
+            .putInt(KEY_LAST_RUN_QUARANTINED_APPS, settings.lastRunQuarantinedAppsCount)
             .putLong(KEY_LAST_RUN_JUNK_BYTES, settings.lastRunJunkBytes)
             .putString(KEY_LAST_RUN_SUMMARY, settings.lastRunSummary)
             .apply()
@@ -80,6 +88,34 @@ object DailyScanScheduler {
         } else {
             cancelAlarm(context)
         }
+    }
+
+    /**
+     * Loads the persistent set of quarantined application package names.
+     */
+    fun loadQuarantinedPackages(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_QUARANTINED_PACKAGES, emptySet()) ?: emptySet()
+    }
+
+    /**
+     * Persists the set of quarantined application package names.
+     */
+    fun saveQuarantinedPackages(context: Context, packages: Set<String>) {
+        getPrefs(context).edit().putStringSet(KEY_QUARANTINED_PACKAGES, packages).apply()
+    }
+
+    /**
+     * Loads the persistent set of user-whitelisted / trusted application package names.
+     */
+    fun loadWhitelistedPackages(context: Context): Set<String> {
+        return getPrefs(context).getStringSet(KEY_WHITELISTED_PACKAGES, emptySet()) ?: emptySet()
+    }
+
+    /**
+     * Persists the set of user-whitelisted / trusted application package names.
+     */
+    fun saveWhitelistedPackages(context: Context, packages: Set<String>) {
+        getPrefs(context).edit().putStringSet(KEY_WHITELISTED_PACKAGES, packages).apply()
     }
 
     /**
@@ -190,7 +226,8 @@ object DailyScanScheduler {
         var junkBytes = 0L
         var autoCleaned = false
 
-        // 1. Antivirus Scan
+        // 1. Antivirus Scan & Auto-Quarantine
+        var quarantinedAppsCount = 0
         if (settings.scanAntivirus) {
             try {
                 val scanned = AntivirusScannerEngine.scanAllAppsSync(context)
@@ -199,6 +236,20 @@ object DailyScanScheduler {
                     it.riskLevel == AppRiskLevel.CRITICAL ||
                             it.riskLevel == AppRiskLevel.HIGH_RISK ||
                             it.riskLevel == AppRiskLevel.SUSPICIOUS
+                }
+
+                if (settings.autoQuarantineUnsafeApps) {
+                    val whitelisted = loadWhitelistedPackages(context)
+                    val unsafeApps = scanned.filter { it.isUnsafe && !whitelisted.contains(it.packageName) }
+                    if (unsafeApps.isNotEmpty()) {
+                        val currentQuarantined = loadQuarantinedPackages(context).toMutableSet()
+                        val previousCount = currentQuarantined.size
+                        unsafeApps.forEach { app ->
+                            currentQuarantined.add(app.packageName)
+                        }
+                        quarantinedAppsCount = currentQuarantined.size - previousCount
+                        saveQuarantinedPackages(context, currentQuarantined)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error running scheduled antivirus scan", e)
@@ -228,13 +279,17 @@ object DailyScanScheduler {
             scannedAppsCount = totalScannedApps,
             threatsFound = threatsFound,
             junkBytes = junkBytes,
-            autoCleaned = autoCleaned
+            autoCleaned = autoCleaned,
+            quarantinedAppsCount = quarantinedAppsCount
         )
 
         // 4. Update and persist settings with last run metadata
         val summaryText = buildString {
             if (settings.scanAntivirus) {
                 append("$totalScannedApps apps audited ($threatsFound threats)")
+                if (settings.autoQuarantineUnsafeApps && quarantinedAppsCount > 0) {
+                    append(" • $quarantinedAppsCount auto-quarantined")
+                }
             }
             if (settings.scanJunkCleaner) {
                 if (isNotEmpty()) append(" • ")
@@ -247,6 +302,7 @@ object DailyScanScheduler {
             lastRunTimestamp = System.currentTimeMillis(),
             lastScannedAppsCount = totalScannedApps,
             lastRunThreatsCount = threatsFound,
+            lastRunQuarantinedAppsCount = quarantinedAppsCount,
             lastRunJunkBytes = junkBytes,
             lastRunSummary = summaryText
         )

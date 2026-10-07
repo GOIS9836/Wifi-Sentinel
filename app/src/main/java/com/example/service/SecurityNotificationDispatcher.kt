@@ -281,7 +281,8 @@ object SecurityNotificationDispatcher {
         scannedAppsCount: Int,
         threatsFound: Int,
         junkBytes: Long,
-        autoCleaned: Boolean
+        autoCleaned: Boolean,
+        quarantinedAppsCount: Int = 0
     ): Boolean {
         initNotificationChannel(context)
 
@@ -311,13 +312,21 @@ object SecurityNotificationDispatcher {
         val hasThreats = threatsFound > 0
 
         val title = if (hasThreats) {
-            "⚠️ Daily Scan: $threatsFound Potential Threats Identified"
+            if (quarantinedAppsCount > 0) {
+                "⚠️ Daily Scan: $quarantinedAppsCount Unsafe Apps Auto-Quarantined"
+            } else {
+                "⚠️ Daily Scan: $threatsFound Potential Threats Identified"
+            }
         } else {
             "🛡️ Daily Sentinel Scan Complete: All Clean"
         }
 
         val shortContent = if (hasThreats) {
-            "$scannedAppsCount packages audited. $threatsFound risk(s) flagged • $junkFormatted junk identified."
+            if (quarantinedAppsCount > 0) {
+                "$scannedAppsCount audited • $quarantinedAppsCount unsafe app(s) quarantined & network severed."
+            } else {
+                "$scannedAppsCount packages audited. $threatsFound risk(s) flagged • $junkFormatted junk identified."
+            }
         } else {
             "$scannedAppsCount packages audited safely • $junkFormatted ${if (autoCleaned) "junk auto-cleaned" else "junk found"}."
         }
@@ -327,6 +336,9 @@ object SecurityNotificationDispatcher {
             append("• Applications Audited: $scannedAppsCount installed packages\n")
             if (hasThreats) {
                 append("• Threat Status: $threatsFound potential risk items detected!\n")
+                if (quarantinedAppsCount > 0) {
+                    append("• Auto-Quarantine: $quarantinedAppsCount unsafe application(s) autonomously isolated from network\n")
+                }
             } else {
                 append("• Threat Status: All applications verified clean & safe\n")
             }

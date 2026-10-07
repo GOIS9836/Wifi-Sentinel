@@ -11,6 +11,9 @@ import android.provider.Settings
 import com.example.data.model.AppRiskLevel
 import com.example.data.model.AppSecurityScanResult
 import com.example.data.model.SystemSecurityAudit
+import com.opifex.wifisentinel.security.AppSecurityAnalyzer
+import com.opifex.wifisentinel.security.SecurityFinding
+import com.opifex.wifisentinel.security.ThreatLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -84,7 +87,7 @@ object AntivirusScannerEngine {
                 packageName = pkg.packageName
             ))
 
-            val scanResult = analyzePackage(pm, pkg, activeAdmins)
+            val scanResult = analyzePackage(context, pm, pkg, activeAdmins)
             results.add(scanResult)
 
             // Small delay for smooth visual scanning feedback in UI
@@ -130,7 +133,7 @@ object AntivirusScannerEngine {
 
         val results = packages.mapNotNull { pkg ->
             if (pkg.applicationInfo != null) {
-                analyzePackage(pm, pkg, activeAdmins)
+                analyzePackage(context, pm, pkg, activeAdmins)
             } else null
         }
 
@@ -141,7 +144,12 @@ object AntivirusScannerEngine {
         )
     }
 
-    fun analyzePackage(pm: PackageManager, pkg: PackageInfo, activeAdmins: Set<String> = emptySet()): AppSecurityScanResult {
+    fun analyzePackage(
+        context: Context? = null,
+        pm: PackageManager,
+        pkg: PackageInfo,
+        activeAdmins: Set<String> = emptySet()
+    ): AppSecurityScanResult {
         val appInfo = pkg.applicationInfo
         val isSystem = if (appInfo != null) {
             (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 ||
@@ -152,6 +160,15 @@ object AntivirusScannerEngine {
             if (appInfo != null) pm.getApplicationLabel(appInfo).toString() else pkg.packageName
         } catch (e: Exception) {
             pkg.packageName
+        }
+
+        // Run deep AppSecurityAnalyzer evaluation if context is available
+        val analyzerResult = context?.let { ctx ->
+            try {
+                AppSecurityAnalyzer(ctx).evaluatePackage(pkg.packageName)
+            } catch (e: Exception) {
+                null
+            }
         }
 
         // Determine installer source
@@ -262,6 +279,14 @@ object AntivirusScannerEngine {
                 riskScore += 15
                 reasons.add("Application built with debuggable flag enabled (increased vulnerability)")
             }
+
+            // Merge findings from AppSecurityAnalyzer
+            analyzerResult?.findings?.forEach { finding ->
+                val findingText = "${finding.title}: ${finding.description}"
+                if (reasons.none { it.contains(finding.title, ignoreCase = true) }) {
+                    reasons.add(findingText)
+                }
+            }
         } else {
             // System apps are generally trusted, but we note privileged rights
             if (hasAccessibility || hasOverlay) {
@@ -269,14 +294,29 @@ object AntivirusScannerEngine {
             }
         }
 
-        if (riskScore >= 100) {
+        // Incorporate AppSecurityAnalyzer composite score if higher
+        val finalCompositeScore = if (analyzerResult != null && !isSystem) {
+            maxOf(riskScore, analyzerResult.compositeScore)
+        } else {
+            riskScore
+        }
+
+        if (finalCompositeScore >= 100) {
             reasons.add("Extreme Threat Threshold Exceeded: Composite score exceeds 100/100 (Quarantine Recommended)")
         }
 
         val riskLevel = when {
-            riskScore >= 60 -> AppRiskLevel.CRITICAL
-            riskScore >= 40 -> AppRiskLevel.HIGH_RISK
-            riskScore >= 20 -> AppRiskLevel.SUSPICIOUS
+            analyzerResult != null && !isSystem -> {
+                when (analyzerResult.threatLevel) {
+                    ThreatLevel.CRITICAL -> AppRiskLevel.CRITICAL
+                    ThreatLevel.HIGH -> if (finalCompositeScore >= 60) AppRiskLevel.CRITICAL else AppRiskLevel.HIGH_RISK
+                    ThreatLevel.ELEVATED -> if (finalCompositeScore >= 40) AppRiskLevel.HIGH_RISK else AppRiskLevel.SUSPICIOUS
+                    ThreatLevel.SAFE -> if (finalCompositeScore >= 60) AppRiskLevel.CRITICAL else if (finalCompositeScore >= 40) AppRiskLevel.HIGH_RISK else if (finalCompositeScore >= 20) AppRiskLevel.SUSPICIOUS else AppRiskLevel.SAFE
+                }
+            }
+            finalCompositeScore >= 60 -> AppRiskLevel.CRITICAL
+            finalCompositeScore >= 40 -> AppRiskLevel.HIGH_RISK
+            finalCompositeScore >= 20 -> AppRiskLevel.SUSPICIOUS
             else -> AppRiskLevel.SAFE
         }
 
@@ -295,7 +335,7 @@ object AntivirusScannerEngine {
             isSystemApp = isSystem,
             installerSource = installerSource,
             riskLevel = riskLevel,
-            riskScore = riskScore,
+            riskScore = finalCompositeScore,
             riskReasons = reasons,
             dangerousPermissions = dangerousFound,
             isQuarantined = false,
@@ -304,7 +344,9 @@ object AntivirusScannerEngine {
             targetSdkVersion = appInfo?.targetSdkVersion ?: 34,
             hasDynamicCodeLoading = dexHeuristics.hasDynamicCodeLoading,
             hasCleartextTraffic = finalCleartext,
-            hasPotrazIdentifierHarvesting = dexHeuristics.hasPotrazIdentifierHarvesting || ("android.permission.READ_PHONE_STATE" in requestedPermissions)
+            hasPotrazIdentifierHarvesting = dexHeuristics.hasPotrazIdentifierHarvesting || ("android.permission.READ_PHONE_STATE" in requestedPermissions),
+            securityFindings = analyzerResult?.findings ?: emptyList(),
+            isTrustedSigner = false
         )
     }
 

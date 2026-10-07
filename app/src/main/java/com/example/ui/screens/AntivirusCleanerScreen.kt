@@ -151,10 +151,13 @@ fun AntivirusCleanerScreen(
     val deviceMetrics by viewModel.deviceMetrics.collectAsState()
     val dailySchedule by viewModel.dailyScanSchedule.collectAsState()
     val isExecutingScheduledScan by viewModel.isExecutingScheduledScan.collectAsState()
+    val autoQuarantineUnsafeApps by viewModel.autoQuarantineUnsafeApps.collectAsState()
+    val quarantinedPackages by viewModel.quarantinedPackageNames.collectAsState()
 
     val totalThreats = scannedApps.count {
         it.riskLevel == AppRiskLevel.CRITICAL || it.riskLevel == AppRiskLevel.HIGH_RISK || it.riskLevel == AppRiskLevel.SUSPICIOUS
     }
+    val unquarantinedThreatsCount = scannedApps.count { it.isUnsafe && !it.isQuarantined && !it.isWhitelisted }
 
     LazyColumn(
         modifier = modifier
@@ -297,6 +300,16 @@ fun AntivirusCleanerScreen(
                 }
 
                 item {
+                    AutoQuarantineAppsControlCard(
+                        isAutoQuarantineEnabled = autoQuarantineUnsafeApps,
+                        unquarantinedThreatsCount = unquarantinedThreatsCount,
+                        quarantinedCount = quarantinedPackages.size,
+                        onToggleAutoQuarantine = { viewModel.setAutoQuarantineUnsafeApps(it) },
+                        onQuarantineAllUnsafe = { viewModel.quarantineAllUnsafeApps() }
+                    )
+                }
+
+                item {
                     AntivirusThreatSummaryRow(
                         scannedApps = scannedApps,
                         systemScore = systemAudit.overallSecurityScore
@@ -358,7 +371,9 @@ fun AntivirusCleanerScreen(
                         isExecuting = isExecutingScheduledScan,
                         onToggleEnabled = { viewModel.toggleDailyScanEnabled(it) },
                         onSetTime = { h, m -> viewModel.setDailyScanTime(h, m) },
-                        onUpdateScope = { av, junk, autoClean -> viewModel.updateDailyScanScope(av, junk, autoClean) },
+                        onUpdateScope = { av, junk, autoClean, autoQuarantine ->
+                            viewModel.updateDailyScanScope(av, junk, autoClean, autoQuarantine)
+                        },
                         onRunNow = { viewModel.runScheduledScanNow() }
                     )
                 }
@@ -672,6 +687,150 @@ fun AntivirusRadarHeroCard(
 }
 
 // ==========================================
+// AUTONOMOUS APP QUARANTINE CONTROL CARD
+// ==========================================
+
+@Composable
+fun AutoQuarantineAppsControlCard(
+    isAutoQuarantineEnabled: Boolean,
+    unquarantinedThreatsCount: Int,
+    quarantinedCount: Int,
+    onToggleAutoQuarantine: (Boolean) -> Unit,
+    onQuarantineAllUnsafe: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(CyberSurface)
+            .border(
+                1.dp,
+                if (isAutoQuarantineEnabled) CyberRed.copy(alpha = 0.5f) else CyberBorder,
+                RoundedCornerShape(14.dp)
+            )
+            .padding(14.dp)
+            .testTag("card_auto_quarantine_apps")
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(38.dp)
+                            .clip(CircleShape)
+                            .background(if (isAutoQuarantineEnabled) CyberRed.copy(alpha = 0.15f) else CyberSurfaceVariant)
+                            .border(1.dp, if (isAutoQuarantineEnabled) CyberRed else CyberBorder, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Auto Quarantine",
+                            tint = if (isAutoQuarantineEnabled) CyberRed else TextMuted,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "AUTO-QUARANTINE UNSAFE APPS",
+                                color = if (isAutoQuarantineEnabled) CyberRed else TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace,
+                                letterSpacing = 1.sp
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (isAutoQuarantineEnabled) CyberRed.copy(alpha = 0.15f) else CyberSurfaceVariant)
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = if (isAutoQuarantineEnabled) "CONFIGURED" else "OFF",
+                                    color = if (isAutoQuarantineEnabled) CyberRed else TextMuted,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (isAutoQuarantineEnabled)
+                                "Autonomous Policy: Automatically isolates threats & drops socket network traffic"
+                            else
+                                "Disabled: Threats require manual review and quarantine",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Switch(
+                    checked = isAutoQuarantineEnabled,
+                    onCheckedChange = onToggleAutoQuarantine,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = CyberBackground,
+                        checkedTrackColor = CyberRed,
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = CyberSurfaceVariant
+                    ),
+                    modifier = Modifier.testTag("switch_auto_quarantine_apps")
+                )
+            }
+
+            if (unquarantinedThreatsCount > 0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(
+                    onClick = onQuarantineAllUnsafe,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(38.dp)
+                        .testTag("btn_auto_quarantine_all"),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = CyberRed,
+                        contentColor = CyberBackground
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = "Auto Quarantine",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Auto-Quarantine $unquarantinedThreatsCount Unsafe App(s) Now",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else if (quarantinedCount > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "🛡️ $quarantinedCount application(s) currently isolated under quarantine policy.",
+                    color = CyberCyan,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
+    }
+}
+
+// ==========================================
 // THREAT SUMMARY PILLS ROW
 // ==========================================
 
@@ -935,12 +1094,12 @@ fun AppSecurityCard(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(riskColor.copy(alpha = 0.15f))
-                                .border(1.dp, riskColor.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                .background(if (app.isQuarantined) CyberRed.copy(alpha = 0.15f) else riskColor.copy(alpha = 0.15f))
+                                .border(1.dp, if (app.isQuarantined) CyberRed.copy(alpha = 0.5f) else riskColor.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = if (app.isQuarantined) "QUARANTINED" else if (app.isWhitelisted) "TRUSTED" else app.riskLevel.label.uppercase(),
+                                text = if (app.isAutoQuarantined) "AUTO-QUARANTINED" else if (app.isQuarantined) "QUARANTINED" else if (app.isWhitelisted) "TRUSTED" else app.riskLevel.label.uppercase(),
                                 color = if (app.isQuarantined) CyberRed else if (app.isWhitelisted) CyberCyan else riskColor,
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
@@ -960,6 +1119,16 @@ fun AppSecurityCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
+                    if (app.isQuarantined) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (app.isAutoQuarantined) "⚡ Auto-Quarantined: Socket network access severed" else "🔒 Quarantined: Socket network access dropped",
+                            color = CyberRed,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Row(
@@ -978,6 +1147,24 @@ fun AppSecurityCard(
                                 text = "•  ${JunkCleanerEngine.formatBytes(app.appSizeBytes)}",
                                 color = TextMuted,
                                 fontSize = 10.sp
+                            )
+                        }
+
+                        if (app.isTrustedSigner) {
+                            Text(
+                                text = "•  Verified Signer",
+                                color = CyberGreen,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (app.hasPotrazIdentifierHarvesting) {
+                            Text(
+                                text = "•  POTRAZ Ch. 12:07",
+                                color = CyberAmber,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -1956,7 +2143,7 @@ fun DailyScanScheduleContent(
     isExecuting: Boolean,
     onToggleEnabled: (Boolean) -> Unit,
     onSetTime: (hour: Int, minute: Int) -> Unit,
-    onUpdateScope: (scanAv: Boolean, scanJunk: Boolean, autoClean: Boolean) -> Unit,
+    onUpdateScope: (scanAv: Boolean, scanJunk: Boolean, autoClean: Boolean, autoQuarantine: Boolean) -> Unit,
     onRunNow: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2257,7 +2444,7 @@ fun DailyScanScheduleContent(
                     iconColor = CyberCyan,
                     isChecked = schedule.scanAntivirus,
                     onCheckedChange = { checked ->
-                        onUpdateScope(checked, schedule.scanJunkCleaner, schedule.autoCleanSafeJunk)
+                        onUpdateScope(checked, schedule.scanJunkCleaner, schedule.autoCleanSafeJunk, schedule.autoQuarantineUnsafeApps)
                     },
                     testTag = "checkbox_scope_antivirus"
                 )
@@ -2272,7 +2459,7 @@ fun DailyScanScheduleContent(
                     iconColor = CyberTeal,
                     isChecked = schedule.scanJunkCleaner,
                     onCheckedChange = { checked ->
-                        onUpdateScope(schedule.scanAntivirus, checked, schedule.autoCleanSafeJunk)
+                        onUpdateScope(schedule.scanAntivirus, checked, schedule.autoCleanSafeJunk, schedule.autoQuarantineUnsafeApps)
                     },
                     testTag = "checkbox_scope_junk"
                 )
@@ -2288,9 +2475,25 @@ fun DailyScanScheduleContent(
                     isChecked = schedule.autoCleanSafeJunk,
                     enabled = schedule.scanJunkCleaner,
                     onCheckedChange = { checked ->
-                        onUpdateScope(schedule.scanAntivirus, schedule.scanJunkCleaner, checked)
+                        onUpdateScope(schedule.scanAntivirus, schedule.scanJunkCleaner, checked, schedule.autoQuarantineUnsafeApps)
                     },
                     testTag = "checkbox_scope_autoclean"
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Item 4: Auto-Quarantine Unsafe Applications
+                DailyScanScopeRow(
+                    title = "Auto-Quarantine Unsafe Applications",
+                    description = "Autonomously isolates critical and high-risk applications and severs socket network privileges.",
+                    icon = Icons.Default.Warning,
+                    iconColor = CyberRed,
+                    isChecked = schedule.autoQuarantineUnsafeApps,
+                    enabled = schedule.scanAntivirus,
+                    onCheckedChange = { checked ->
+                        onUpdateScope(schedule.scanAntivirus, schedule.scanJunkCleaner, schedule.autoCleanSafeJunk, checked)
+                    },
+                    testTag = "checkbox_scope_autoquarantine"
                 )
             }
         }

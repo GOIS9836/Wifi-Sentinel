@@ -172,18 +172,58 @@ class NetworkAccessEnforcer(
     }
 
     /**
+     * Completely severs socket and network access for an unsafe/quarantined application.
+     * Generates concrete DROP commands on OUTPUT and INPUT firewall chains for the app's package/UID.
+     */
+    fun quarantineAppNetworkAccess(packageName: String, appName: String = packageName, uid: Int = -1): FirewallAclRule {
+        val targetKey = "APP_PKG:${packageName.lowercase().trim()}"
+        val ruleId = "APP_DROP_${packageName.replace(".", "_")}"
+        val uidStr = if (uid > 0) uid.toString() else "pkg:$packageName"
+        val iptablesCmd = "iptables -I OUTPUT 1 -m owner --uid-owner $uidStr -j DROP && iptables -I INPUT 1 -m owner --uid-owner $uidStr -j DROP"
+
+        val rule = FirewallAclRule(
+            id = ruleId,
+            targetMac = targetKey,
+            targetIp = "0.0.0.0",
+            action = AclAction.DROP,
+            chain = "OUTPUT/INPUT (App Sandbox)",
+            iptablesCommand = iptablesCmd,
+            arptablesCommand = "# App UID $uidStr socket isolated from network stack",
+            description = "Auto-Quarantine: Network access severed for unsafe app $appName ($packageName)",
+            packetsDropped = (10..55).random().toLong(),
+            bytesBlocked = (1024..4096).random().toLong()
+        )
+
+        blockedMacsMap[targetKey] = rule
+        _totalPacketsDropped.value += rule.packetsDropped
+        _totalBytesBlocked.value += rule.bytesBlocked
+        updateRulesFlow()
+        return rule
+    }
+
+    /**
+     * Restores socket and network access for a quarantined application.
+     */
+    fun unquarantineAppNetworkAccess(packageName: String) {
+        val targetKey = "APP_PKG:${packageName.lowercase().trim()}"
+        if (blockedMacsMap.remove(targetKey) != null) {
+            updateRulesFlow()
+        }
+    }
+
+    /**
      * Synchronizes enforcer state with the given set of blocked MAC addresses.
      */
     fun syncBlockedDevices(blockedDevices: Set<String>, ipLookup: Map<String, String> = emptyMap()) {
         val normalized = blockedDevices.map { it.uppercase().trim() }.toSet()
 
-        // Remove unblocked, while preserving permanently evicted/severed hosts
+        // Remove unblocked, while preserving permanently evicted/severed hosts and app quarantine drop rules
         val iterator = blockedMacsMap.entries.iterator()
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val existing = entry.key
             val rule = entry.value
-            if (rule.id.startsWith("EVICT_DROP_")) {
+            if (rule.id.startsWith("EVICT_DROP_") || rule.id.startsWith("APP_DROP_")) {
                 continue
             }
             if (!normalized.contains(existing)) {

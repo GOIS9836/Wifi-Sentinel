@@ -300,6 +300,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     private val _whitelistedPackageNames = MutableStateFlow<Set<String>>(emptySet())
     val whitelistedPackageNames: StateFlow<Set<String>> = _whitelistedPackageNames.asStateFlow()
 
+    private val _autoQuarantineUnsafeApps = MutableStateFlow(true)
+    val autoQuarantineUnsafeApps: StateFlow<Boolean> = _autoQuarantineUnsafeApps.asStateFlow()
+
     private var antivirusScanJob: Job? = null
 
     // System Cache & Junk Cleaner States
@@ -483,8 +486,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         generateSummaryReport()
         refreshSystemAudit()
         refreshJunkStorage()
+        val loadedSchedule = DailyScanScheduler.loadSettings(application)
+        _dailyScanSchedule.value = loadedSchedule
+        _autoQuarantineUnsafeApps.value = loadedSchedule.autoQuarantineUnsafeApps
+        val initialQuarantined = DailyScanScheduler.loadQuarantinedPackages(application)
+        _quarantinedPackageNames.value = initialQuarantined
+        _whitelistedPackageNames.value = DailyScanScheduler.loadWhitelistedPackages(application)
+        initialQuarantined.forEach { pkg ->
+            networkAccessEnforcer.quarantineAppNetworkAccess(pkg)
+        }
         startAntivirusScan()
-        _dailyScanSchedule.value = DailyScanScheduler.loadSettings(application)
         refreshNetworkRiskScore()
 
         try {
@@ -2028,7 +2039,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                         val threats = event.results.count {
                             it.riskLevel == AppRiskLevel.CRITICAL || it.riskLevel == AppRiskLevel.HIGH_RISK || it.riskLevel == AppRiskLevel.SUSPICIOUS
                         }
-                        _scannedApps.value = event.results
+
+                        val activeQuarantined = _quarantinedPackageNames.value.toMutableSet()
+                        val activeWhitelisted = _whitelistedPackageNames.value
+                        val autoQuarantineActive = _autoQuarantineUnsafeApps.value
+
+                        val newlyQuarantined = mutableSetOf<String>()
+
+                        val processedResults = event.results.map { app ->
+                            val isWhitelisted = activeWhitelisted.contains(app.packageName)
+                            val isAlreadyQuarantined = activeQuarantined.contains(app.packageName)
+                            val shouldAutoQuarantine = autoQuarantineActive && app.isUnsafe && !isWhitelisted
+
+                            val isQuarantined = isAlreadyQuarantined || shouldAutoQuarantine
+                            if (shouldAutoQuarantine && !isAlreadyQuarantined) {
+                                newlyQuarantined.add(app.packageName)
+                                activeQuarantined.add(app.packageName)
+                                networkAccessEnforcer.quarantineAppNetworkAccess(app.packageName, app.appName)
+                            }
+
+                            app.copy(
+                                isQuarantined = isQuarantined,
+                                isAutoQuarantined = shouldAutoQuarantine || (isAlreadyQuarantined && app.isUnsafe),
+                                isWhitelisted = isWhitelisted
+                            )
+                        }
+
+                        if (newlyQuarantined.isNotEmpty()) {
+                            _quarantinedPackageNames.value = activeQuarantined
+                            DailyScanScheduler.saveQuarantinedPackages(getApplication(), activeQuarantined)
+                        }
+
+                        _scannedApps.value = processedResults
                         _antivirusState.value = _antivirusState.value.copy(
                             isScanning = false,
                             scanProgress = 1f,
@@ -2104,6 +2146,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         val set = _quarantinedPackageNames.value.toMutableSet()
         set.add(packageName)
         _quarantinedPackageNames.value = set
+        DailyScanScheduler.saveQuarantinedPackages(getApplication(), set)
+        val targetApp = _scannedApps.value.find { it.packageName == packageName }
+        val appName = targetApp?.appName ?: packageName
+        networkAccessEnforcer.quarantineAppNetworkAccess(packageName, appName)
         _scannedApps.value = _scannedApps.value.map {
             if (it.packageName == packageName) it.copy(isQuarantined = true) else it
         }
@@ -2113,8 +2159,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         val set = _quarantinedPackageNames.value.toMutableSet()
         set.remove(packageName)
         _quarantinedPackageNames.value = set
+        DailyScanScheduler.saveQuarantinedPackages(getApplication(), set)
+        networkAccessEnforcer.unquarantineAppNetworkAccess(packageName)
         _scannedApps.value = _scannedApps.value.map {
-            if (it.packageName == packageName) it.copy(isQuarantined = false) else it
+            if (it.packageName == packageName) it.copy(isQuarantined = false, isAutoQuarantined = false) else it
         }
     }
 
@@ -2122,8 +2170,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         val set = _whitelistedPackageNames.value.toMutableSet()
         set.add(packageName)
         _whitelistedPackageNames.value = set
+        DailyScanScheduler.saveWhitelistedPackages(getApplication(), set)
         _scannedApps.value = _scannedApps.value.map {
             if (it.packageName == packageName) it.copy(isWhitelisted = true) else it
+        }
+    }
+
+    fun quarantineAllUnsafeApps(): Int {
+        val activeQuarantined = _quarantinedPackageNames.value.toMutableSet()
+        val activeWhitelisted = _whitelistedPackageNames.value
+        var quarantinedCount = 0
+
+        val updated = _scannedApps.value.map { app ->
+            if (app.isUnsafe && !activeWhitelisted.contains(app.packageName)) {
+                if (!activeQuarantined.contains(app.packageName)) {
+                    activeQuarantined.add(app.packageName)
+                    quarantinedCount++
+                    networkAccessEnforcer.quarantineAppNetworkAccess(app.packageName, app.appName)
+                }
+                app.copy(isQuarantined = true, isAutoQuarantined = true)
+            } else {
+                app
+            }
+        }
+
+        if (quarantinedCount > 0) {
+            _quarantinedPackageNames.value = activeQuarantined
+            DailyScanScheduler.saveQuarantinedPackages(getApplication(), activeQuarantined)
+            _scannedApps.value = updated
+        }
+        return quarantinedCount
+    }
+
+    fun setAutoQuarantineUnsafeApps(enabled: Boolean) {
+        _autoQuarantineUnsafeApps.value = enabled
+        val updatedSchedule = _dailyScanSchedule.value.copy(autoQuarantineUnsafeApps = enabled)
+        updateDailyScanSchedule(updatedSchedule)
+        if (enabled) {
+            quarantineAllUnsafeApps()
         }
     }
 
@@ -2161,6 +2245,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
 
     fun updateDailyScanSchedule(newSettings: DailyScanScheduleSettings) {
         _dailyScanSchedule.value = newSettings
+        _autoQuarantineUnsafeApps.value = newSettings.autoQuarantineUnsafeApps
         DailyScanScheduler.saveSettings(getApplication(), newSettings)
     }
 
@@ -2174,13 +2259,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         updateDailyScanSchedule(updated)
     }
 
-    fun updateDailyScanScope(scanAntivirus: Boolean, scanJunk: Boolean, autoCleanSafe: Boolean) {
+    fun updateDailyScanScope(
+        scanAntivirus: Boolean,
+        scanJunk: Boolean,
+        autoCleanSafe: Boolean,
+        autoQuarantine: Boolean = _autoQuarantineUnsafeApps.value
+    ) {
         val updated = _dailyScanSchedule.value.copy(
             scanAntivirus = scanAntivirus,
             scanJunkCleaner = scanJunk,
-            autoCleanSafeJunk = autoCleanSafe
+            autoCleanSafeJunk = autoCleanSafe,
+            autoQuarantineUnsafeApps = autoQuarantine
         )
         updateDailyScanSchedule(updated)
+        if (autoQuarantine) {
+            quarantineAllUnsafeApps()
+        }
     }
 
     fun runScheduledScanNow() {
@@ -2190,6 +2284,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
             try {
                 val updated = DailyScanScheduler.executeScheduledScan(getApplication())
                 _dailyScanSchedule.value = updated
+                val quarantinedSet = DailyScanScheduler.loadQuarantinedPackages(getApplication())
+                _quarantinedPackageNames.value = quarantinedSet
+                _scannedApps.value = _scannedApps.value.map {
+                    val isQ = quarantinedSet.contains(it.packageName)
+                    it.copy(isQuarantined = isQ, isAutoQuarantined = isQ && it.isUnsafe)
+                }
                 refreshJunkStorage()
             } catch (e: Exception) {
                 android.util.Log.e("MainViewModel", "Error in manual scheduled scan execution", e)

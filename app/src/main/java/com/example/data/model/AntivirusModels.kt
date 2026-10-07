@@ -21,12 +21,17 @@ data class AppSecurityScanResult(
     val dangerousPermissions: List<String> = emptyList(),
     val isQuarantined: Boolean = false,
     val isWhitelisted: Boolean = false,
+    val isAutoQuarantined: Boolean = false,
     val appSizeBytes: Long = 0L,
     val targetSdkVersion: Int = 34,
     val hasDynamicCodeLoading: Boolean = false,
     val hasCleartextTraffic: Boolean = false,
-    val hasPotrazIdentifierHarvesting: Boolean = false
-)
+    val hasPotrazIdentifierHarvesting: Boolean = false,
+    val securityFindings: List<com.opifex.wifisentinel.security.SecurityFinding> = emptyList(),
+    val isTrustedSigner: Boolean = false
+) {
+    val isUnsafe: Boolean get() = (riskLevel == AppRiskLevel.CRITICAL || riskLevel == AppRiskLevel.HIGH_RISK || riskLevel == AppRiskLevel.SUSPICIOUS) && !isWhitelisted && !isSystemApp
+}
 
 enum class JunkType {
     APP_CACHE,
@@ -92,9 +97,11 @@ data class DailyScanScheduleSettings(
     val scanAntivirus: Boolean = true,
     val scanJunkCleaner: Boolean = true,
     val autoCleanSafeJunk: Boolean = true,
+    val autoQuarantineUnsafeApps: Boolean = true,
     val lastRunTimestamp: Long = 0L,
     val lastScannedAppsCount: Int = 0,
     val lastRunThreatsCount: Int = 0,
+    val lastRunQuarantinedAppsCount: Int = 0,
     val lastRunJunkBytes: Long = 0L,
     val lastRunSummary: String = ""
 ) {
