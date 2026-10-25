@@ -320,6 +320,17 @@ object AntivirusScannerEngine {
             else -> AppRiskLevel.SAFE
         }
 
+        val isSelfOrDevPlatform = pkg.packageName == context?.packageName ||
+                pkg.packageName in setOf("com.termux", "com.termux.api", "com.example.wifisentinel")
+
+        val effectiveRiskLevel = if (isSelfOrDevPlatform) AppRiskLevel.SAFE else riskLevel
+        val effectiveScore = if (isSelfOrDevPlatform) 0 else finalCompositeScore
+        val effectiveReasons = if (isSelfOrDevPlatform) {
+            listOf("Verified Core Development / Sentinel Runtime Environment (Whitelisted)")
+        } else {
+            reasons
+        }
+
         val appSize = try {
             if (appInfo != null && appInfo.sourceDir != null) {
                 File(appInfo.sourceDir).length()
@@ -334,12 +345,12 @@ object AntivirusScannerEngine {
             versionName = pkg.versionName ?: "1.0",
             isSystemApp = isSystem,
             installerSource = installerSource,
-            riskLevel = riskLevel,
-            riskScore = finalCompositeScore,
-            riskReasons = reasons,
+            riskLevel = effectiveRiskLevel,
+            riskScore = effectiveScore,
+            riskReasons = effectiveReasons,
             dangerousPermissions = dangerousFound,
             isQuarantined = false,
-            isWhitelisted = false,
+            isWhitelisted = isSelfOrDevPlatform,
             appSizeBytes = appSize,
             targetSdkVersion = appInfo?.targetSdkVersion ?: 34,
             hasDynamicCodeLoading = dexHeuristics.hasDynamicCodeLoading,
@@ -476,6 +487,10 @@ object AntivirusScannerEngine {
         val trustedAdminPackages = setOf(
             "com.google.android.apps.adm", // Google Find My Device
             "com.google.android.gms",
+            "com.google.android.apps.work.clouddpc", // Android Enterprise Work Profile
+            "com.termux",
+            "com.termux.api",
+            "com.example.wifisentinel",
             context.packageName
         )
 

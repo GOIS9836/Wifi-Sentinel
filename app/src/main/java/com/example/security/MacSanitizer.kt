@@ -12,11 +12,27 @@ import java.security.MessageDigest
 object MacSanitizer {
 
     /**
+     * Checks if a MAC address is an unresolvable placeholder, null, or Android privacy address.
+     * On Android 6.0+ and 10+ (API 29+), getMacAddress() returns "02:00:00:00:00:00".
+     * Non-root ARP lookups frequently return placeholders like "--", "UNKNOWN", or null.
+     */
+    fun isPlaceholderOrPrivacyMac(macAddress: String): Boolean {
+        val clean = macAddress.trim().uppercase()
+        return clean.isBlank() || clean in setOf(
+            "--", "UNKNOWN", "N/A", "NONE", "INCOMPLETE",
+            "02:00:00:00:00:00", // Android default privacy MAC
+            "00:00:00:00:00:00", // Null MAC
+            "FF:FF:FF:FF:FF:FF"  // Broadcast MAC
+        )
+    }
+
+    /**
      * Checks if a MAC address is a randomized, locally-administered address (LAA).
      * Standard IEEE 802 rule: The 2nd least-significant bit of the first byte is 1.
      * Example: x2:xx:xx:xx:xx:xx, x6:xx:xx:xx:xx:xx, xA:xx:xx:xx:xx:xx, xE:xx:xx:xx:xx:xx
      */
     fun isRandomizedMac(macAddress: String): Boolean {
+        if (isPlaceholderOrPrivacyMac(macAddress)) return false
         val cleanMac = macAddress.replace(":", "").replace("-", "").trim()
         if (cleanMac.length < 2) return false
 

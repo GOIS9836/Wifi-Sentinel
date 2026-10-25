@@ -114,10 +114,11 @@ object ZeroToleranceDuplicationGuard {
                 resolvedIpList.add(group.first())
             } else {
                 // Duplicate IP collision detected!
-                // Prioritize Self device > Gateway > Authorized Device > Lower MAC
+                // Prioritize Self device > Gateway > Authorized Device > Resolved MAC > Lower MAC
                 val authoritativeDev = group.find { it.isSelf }
                     ?: group.find { it.isGateway }
                     ?: group.find { it.isAuthorized }
+                    ?: group.find { !com.example.security.MacSanitizer.isPlaceholderOrPrivacyMac(it.macAddress) }
                     ?: group.minByOrNull { it.macAddress }!!
 
                 for (dev in group) {
@@ -151,10 +152,16 @@ object ZeroToleranceDuplicationGuard {
         // 4. MAC ADDRESS DEDUPLICATION & LAYER-2 CLONE PREVENTION
         val macGroups = resolvedIpList.groupBy { it.macAddress.uppercase().trim() }
         val finalDeduplicated = mutableListOf<DiscoveredDevice>()
+        val approvedBridgeMacs = setOf("B4:0F:3B:7F:A3:F0")
 
         for ((mac, group) in macGroups) {
-            if (group.size == 1) {
-                finalDeduplicated.add(group.first())
+            val isPlaceholder = com.example.security.MacSanitizer.isPlaceholderOrPrivacyMac(mac)
+            val isApprovedBridge = approvedBridgeMacs.contains(mac.uppercase())
+            if (group.size == 1 || isPlaceholder || isApprovedBridge) {
+                // In Android userland, unresolvable or privacy-masked MACs across different IPs
+                // or verified multi-homed/bridged access points must NOT be collapsed as clones
+                // or trigger false positive alerts.
+                finalDeduplicated.addAll(group)
             } else {
                 // Duplicate MAC entries across multiple records
                 violations.add(
@@ -206,11 +213,14 @@ object ZeroToleranceDuplicationGuard {
 
         for (dev in devices) {
             val normalizedMac = dev.macAddress.uppercase().trim()
-            if (seenMacs.contains(normalizedMac)) {
+            val isPlaceholder = com.example.security.MacSanitizer.isPlaceholderOrPrivacyMac(normalizedMac)
+            if (!isPlaceholder && seenMacs.contains(normalizedMac)) {
                 // Layer-2 clone duplicate dropped
                 continue
             }
-            seenMacs.add(normalizedMac)
+            if (!isPlaceholder) {
+                seenMacs.add(normalizedMac)
+            }
 
             if (dev.isGateway || dev.ip == primaryGatewayIp) {
                 if (!gatewayEncountered) {

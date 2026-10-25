@@ -29,11 +29,16 @@ object DeviceWhitelistComparisonEngine {
         previouslyAlertedMacs: Set<String> = emptySet(),
         suppressedMacs: Set<String> = emptySet()
     ): DeviceWhitelistAuditResult {
-        // Step 1: Index all explicitly whitelisted MAC addresses (normalized to uppercase)
+        // Step 1: Index all explicitly whitelisted MAC and IP addresses
         val whitelistedMacSet = whitelist
             .filter { it.isAuthorized }
             .map { it.macAddress.trim().uppercase() }
             .toMutableSet()
+
+        val whitelistedIpSet = whitelist
+            .filter { it.isAuthorized && it.ipAddress.isNotBlank() }
+            .map { it.ipAddress.trim() }
+            .toSet()
 
         val whitelistedDevices = mutableListOf<DiscoveredDevice>()
         val unknownDevices = mutableListOf<DiscoveredDevice>()
@@ -46,8 +51,10 @@ object DeviceWhitelistComparisonEngine {
                     (gatewayIp.isNotBlank() && device.ip == gatewayIp) ||
                     (gatewayMac.isNotBlank() && normalizedMac.equals(gatewayMac.trim().uppercase(), ignoreCase = true))
 
-            // Check if device matches known-device whitelist or is inherently trusted infrastructure
-            val isWhitelisted = whitelistedMacSet.contains(normalizedMac) || isSelfDevice || isGatewayDevice
+            // Check if device matches known-device whitelist (by MAC or IP) or is inherently trusted infrastructure
+            val isWhitelisted = whitelistedMacSet.contains(normalizedMac) ||
+                    whitelistedIpSet.contains(device.ip) ||
+                    isSelfDevice || isGatewayDevice
 
             if (isWhitelisted) {
                 whitelistedDevices.add(
@@ -60,11 +67,18 @@ object DeviceWhitelistComparisonEngine {
             } else {
                 // Device is not in whitelist: evaluate unknown status
                 val isSuppressed = device.isFalsePositiveSuppressed || suppressedMacs.contains(normalizedMac)
+                val isRandom = com.example.security.MacSanitizer.isRandomizedMac(device.macAddress)
+                val defaultVector = if (isRandom) {
+                    "Android Mobile Privacy LAA: Randomized MAC detected (Standard Smartphone Behavior)"
+                } else {
+                    "Whitelist Comparison Check: Host Unlisted"
+                }
+
                 val enrichedUnknown = device.copy(
                     isAuthorized = false,
                     isFlaggedUnknown = true,
                     threatLevel = if (isSuppressed) ThreatLevel.FALSE_POSITIVE_SUPPRESSED else ThreatLevel.UNAUTHORIZED_INTRUDER,
-                    corroborationVector = if (device.corroborationVector.isBlank()) "Whitelist Comparison Check: Host Unlisted" else device.corroborationVector
+                    corroborationVector = if (device.corroborationVector.isBlank()) defaultVector else device.corroborationVector
                 )
 
                 unknownDevices.add(enrichedUnknown)

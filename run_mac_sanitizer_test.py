@@ -40,12 +40,25 @@ NODE_ID = "Nodes-Pergamus"
 # 1. CORE SANITIZATION & PRIVACY LOGIC (POTRAZ CDPA Ch. 12:07)
 # =============================================================================
 
+def is_placeholder_mac(mac_address: str) -> bool:
+    """
+    Checks if a MAC address is an unresolvable placeholder, null, or Android privacy dummy MAC.
+    Prevents false-positive MAC duplication flags in Android non-root environments.
+    """
+    clean = mac_address.strip().upper()
+    return not clean or clean in {
+        "--", "UNKNOWN", "N/A", "NONE", "INCOMPLETE",
+        "02:00:00:00:00:00", "00:00:00:00:00:00", "FF:FF:FF:FF:FF:FF"
+    }
+
 def is_randomized_mac(mac_address: str) -> bool:
     """
     Checks if a MAC address is a randomized, locally-administered address (LAA).
     Standard IEEE 802 rule: The 2nd least-significant bit of the first byte is 1.
     Examples: x2:..., x6:..., xA:..., xE:...
     """
+    if is_placeholder_mac(mac_address):
+        return False
     clean_mac = mac_address.replace(":", "").replace("-", "").strip()
     if len(clean_mac) < 2:
         return False
@@ -402,6 +415,10 @@ class SentinelTestBattery:
             assert is_randomized_mac("") is False
             assert is_randomized_mac("X") is False
             assert is_randomized_mac("INVALID:MAC:ADDR") is False
+            assert is_placeholder_mac("--") is True
+            assert is_placeholder_mac("02:00:00:00:00:00") is True
+            assert is_placeholder_mac("00:00:00:00:00:00") is True
+            assert is_placeholder_mac("00:1A:2B:3C:4D:5E") is False
             assert mask_mac_address("SHORT") == "SHORT"
             assert mask_mac_address("INVALID:MAC:LEN:EXTRA:BITS:HERE:NOW") == "INVALID:MAC:LEN:EXTRA:BITS:HERE:NOW"
         self.execute_test(c, "malformedInputsAndEdgeCases_gracefullyHandledWithoutException", t4)

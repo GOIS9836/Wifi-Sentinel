@@ -7,13 +7,6 @@
       "ssid": "G_4035",
       "subnetMask": "255.255.255.0",
       "isPrimary": true
-    },
-    {
-      "gatewayIp": "192.168.3.1",
-      "label": "Starlink Additional Gateway",
-      "ssid": "Starlink",
-      "subnetMask": "255.255.255.0",
-      "isPrimary": false
     }
   ],
   "whitelistedMacs": [
@@ -38,12 +31,9 @@
       "role": "Authorized Lenovo IdeaPad (Linux Mint: libertycuca9836@ideapad)"
     },
     {
-      "ip": "192.168.3.1",
-      "role": "Starlink Additional Gateway Infrastructure"
-    },
-    {
-      "ip": "192.168.3.229",
-      "role": "Nodes-Pergamus Security Core (Starlink Segment)"
+      "ip": "192.168.1.190",
+      "role": "Authorized Pergamus Workstation (OpifexNetManager Host)",
+      "mac": "2c:3b:70:c9:64:df"
     }
   ],
   "autonomousQuarantinePolicy": {

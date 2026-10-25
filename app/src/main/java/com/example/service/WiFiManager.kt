@@ -480,7 +480,7 @@ class WiFiManager(private val context: Context) {
             val reason = when {
                 isBlocked -> "Access Denied: Device is actively quarantined by Firewall ACL (Network access severed)."
                 isAuth -> "Verified authorized host."
-                isRandom -> "Potential stealth intruder: Locally administered (randomized) MAC detected on subnet without authorization."
+                isRandom -> "Mobile Device Privacy MAC: Locally administered address (Standard Android/iOS privacy feature)."
                 else -> "Potential unauthorized user: MAC address not found in authorized whitelist."
             }
 
@@ -512,7 +512,7 @@ class WiFiManager(private val context: Context) {
                 val reason = when {
                     isBlocked -> "Access Denied: Device is in quarantine / blocked list. Network access revoked."
                     isAuth -> "Verified authorized host."
-                    isRandom -> "Potential stealth intruder: Probe-responsive host with randomized private MAC."
+                    isRandom -> "Mobile Device Privacy MAC: Probe-responsive host with randomized private MAC."
                     else -> "Potential unauthorized user: Responsive host not registered in network baseline."
                 }
                 discovered.add(
@@ -551,7 +551,7 @@ class WiFiManager(private val context: Context) {
                 val reason = when {
                     isBlocked -> "Access Denied: Device quarantined by Firewall ACL."
                     isAuth -> "Verified authorized host."
-                    isRandom -> "Potential stealth intruder: Locally administered (randomized) MAC detected."
+                    isRandom -> "Mobile Device Privacy MAC: Locally administered address (Standard Mobile Privacy)."
                     else -> "Potential unauthorized user: Unregistered device detected on subnet."
                 }
                 discovered.add(
