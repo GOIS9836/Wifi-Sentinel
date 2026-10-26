@@ -940,7 +940,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     }
 
     private fun auditRogueAccessPoints(aps: List<NearbyAccessPoint>, state: WifiConnectionState) {
-        val whitelistedBssids = _whitelistedDevices.value.map { it.macAddress }.toSet()
+        val whitelistedBssids = whitelistedDevices.value.map { it.macAddress }.toSet()
         val report = repository.auditRogueAccessPoints(state, aps, whitelistedBssids)
         _rogueApReport.value = report
 
@@ -950,8 +950,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                     repository.recordSecurityAlert(
                         title = "Evil Twin / Rogue AP Detected",
                         description = anomaly.detail,
-                        severity = anomaly.severity,
-                        source = "RogueApSentryEngine"
+                        deviceIp = state.gatewayIp,
+                        deviceMac = anomaly.bssid,
+                        severity = anomaly.severity
                     )
                 }
             }
