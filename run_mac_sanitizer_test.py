@@ -185,6 +185,101 @@ class MockIotChipsetSecurityEngine:
         return cls.profile_mac(mac).is_iot
 
 # =============================================================================
+# 2B. ROGUE AP & EVIL TWIN SENTRY MOCK (RF Spectrum & Downgrade Detection)
+# =============================================================================
+
+class MockRogueApSentryEngine:
+    DEFAULT_APPROVED_BSSIDS = {
+        "B4:0F:3B:7F:A3:F0",
+        "2C:3B:70:C9:64:DF"
+    }
+
+    @classmethod
+    def audit_access_points(cls, connected_ssid: str, connected_bssid: str, connected_sec: str,
+                            access_points: List[Dict[str, Any]], whitelisted_bssids: Optional[Set[str]] = None) -> Dict[str, Any]:
+        approved = set(cls.DEFAULT_APPROVED_BSSIDS)
+        if whitelisted_bssids:
+            approved.update(b.upper() for b in whitelisted_bssids)
+
+        c_ssid = connected_ssid.strip()
+        c_bssid = connected_bssid.upper().strip()
+        c_sec = connected_sec.upper()
+
+        anomalies = []
+        evil_twin_count = 0
+        downgrade_count = 0
+
+        for ap in access_points:
+            ssid = ap.get("ssid", "").strip()
+            bssid = ap.get("bssid", "").upper().strip()
+            sec = ap.get("security", "").upper()
+
+            if not bssid or bssid in ("02:00:00:00:00:00", "00:00:00:00:00:00", "--:--:--:--:--:--"):
+                continue
+
+            if ssid.lower() == c_ssid.lower() and bssid != c_bssid and bssid not in approved:
+                is_open = "OPEN" in sec or not sec or sec == "[ESS]"
+                is_wep = "WEP" in sec
+                is_downgrade = ("WPA" in c_sec or "SAE" in c_sec) and (is_open or is_wep)
+                is_laa = is_randomized_mac(bssid)
+
+                if is_downgrade:
+                    downgrade_count += 1
+                    evil_twin_count += 1
+                    anomalies.append({
+                        "bssid": bssid,
+                        "anomaly_type": "SECURITY_DOWNGRADE_ATTACK",
+                        "severity": "CRITICAL"
+                    })
+                elif is_laa:
+                    evil_twin_count += 1
+                    anomalies.append({
+                        "bssid": bssid,
+                        "anomaly_type": "LAA_RANDOMIZED_BSSID_ROGUE",
+                        "severity": "HIGH"
+                    })
+                else:
+                    anomalies.append({
+                        "bssid": bssid,
+                        "anomaly_type": "UNAUTHORIZED_MESH_BSSID",
+                        "severity": "WARNING"
+                    })
+
+        has_evil_twin = evil_twin_count > 0
+        has_downgrade = downgrade_count > 0
+        sev = "CRITICAL" if has_downgrade else ("HIGH" if has_evil_twin else ("WARNING" if anomalies else "SAFE"))
+
+        return {
+            "is_evil_twin_detected": has_evil_twin,
+            "has_downgrade_threat": has_downgrade,
+            "total_anomalies": len(anomalies),
+            "anomalies": anomalies,
+            "highest_severity": sev
+        }
+
+# =============================================================================
+# 2C. FRUGAL IN-MEMORY TELEMETRY CACHE MOCK (Resource-Frugal Invariant)
+# =============================================================================
+
+class MockFrugalCache:
+    def __init__(self, ttl_sec: int = 300):
+        self.ttl_sec = ttl_sec
+        self.cached_digest = None
+        self.cached_report = None
+        self.last_timestamp = 0.0
+        self.api_call_count = 0
+
+    def get_or_compute(self, digest: str, compute_fn, now: float):
+        if self.cached_digest == digest and (now - self.last_timestamp) < self.ttl_sec:
+            return self.cached_report, True  # cache hit
+        self.api_call_count += 1
+        result = compute_fn()
+        self.cached_digest = digest
+        self.cached_report = result
+        self.last_timestamp = now
+        return result, False  # cache miss
+
+# =============================================================================
 # 3. REPOSITORY & INVENTORY MOCK (Data Layer & Quarantine Operations)
 # =============================================================================
 
@@ -657,6 +752,125 @@ class SentinelTestBattery:
             assert snapshot_1 == snapshot_2, "State drift detected across identical operations!"
         self.execute_test(c, "mathematicalIdempotencyInvariant_zeroConfigurationDrift", t1)
 
+    # --- SUITE 7: RogueApSentryEngine (Evil Twin, Downgrade & BSSID Whitelist) ---
+    def run_rogue_ap_sentry_suite(self):
+        c = "com.example.service.RogueApSentryEngineTest"
+
+        def t1():
+            # Evil Twin with Security Downgrade attack (WPA3-SAE to Open)
+            aps = [
+                {"ssid": "Corporate_5G", "bssid": "94:B4:0F:11:22:33", "security": "Open", "rssi": -55},
+                {"ssid": "Neighbor_2G", "bssid": "00:1A:2B:99:88:77", "security": "WPA2", "rssi": -78}
+            ]
+            res = MockRogueApSentryEngine.audit_access_points(
+                connected_ssid="Corporate_5G",
+                connected_bssid="00:1A:2B:3C:4D:01",
+                connected_sec="WPA3-Personal (SAE)",
+                access_points=aps
+            )
+            assert res["is_evil_twin_detected"] is True
+            assert res["has_downgrade_threat"] is True
+            assert res["highest_severity"] == "CRITICAL"
+            assert res["total_anomalies"] == 1
+            assert res["anomalies"][0]["anomaly_type"] == "SECURITY_DOWNGRADE_ATTACK"
+        self.execute_test(c, "detectsEvilTwinDowngradeAttack", t1)
+
+        def t2():
+            # Rogue Soft-AP using LAA randomized BSSID
+            aps = [
+                {"ssid": "Corporate_5G", "bssid": "DA:A1:19:00:11:22", "security": "WPA2", "rssi": -50}
+            ]
+            res = MockRogueApSentryEngine.audit_access_points(
+                connected_ssid="Corporate_5G",
+                connected_bssid="00:1A:2B:3C:4D:01",
+                connected_sec="WPA2",
+                access_points=aps
+            )
+            assert res["is_evil_twin_detected"] is True
+            assert res["highest_severity"] == "HIGH"
+            assert res["anomalies"][0]["anomaly_type"] == "LAA_RANDOMIZED_BSSID_ROGUE"
+        self.execute_test(c, "detectsLaaRandomizedMacSoftAp", t2)
+
+        def t3():
+            # Approved bridge / extender BSSID must suppress false positives
+            aps = [
+                {"ssid": "Corporate_5G", "bssid": "B4:0F:3B:7F:A3:F0", "security": "WPA2", "rssi": -58}
+            ]
+            res = MockRogueApSentryEngine.audit_access_points(
+                connected_ssid="Corporate_5G",
+                connected_bssid="00:1A:2B:3C:4D:01",
+                connected_sec="WPA2",
+                access_points=aps
+            )
+            assert res["is_evil_twin_detected"] is False
+            assert res["total_anomalies"] == 0
+            assert res["highest_severity"] == "SAFE"
+        self.execute_test(c, "whitelistedMeshBssid_suppressesFalsePositives", t3)
+
+        def t4():
+            # Clean RF spectrum with only nominal distinct networks
+            aps = [
+                {"ssid": "Guest_Net", "bssid": "11:22:33:44:55:66", "security": "WPA2", "rssi": -70},
+                {"ssid": "IoT_Net", "bssid": "22:33:44:55:66:77", "security": "WPA2", "rssi": -80}
+            ]
+            res = MockRogueApSentryEngine.audit_access_points(
+                connected_ssid="Corporate_5G",
+                connected_bssid="00:1A:2B:3C:4D:01",
+                connected_sec="WPA2",
+                access_points=aps
+            )
+            assert res["is_evil_twin_detected"] is False
+            assert res["total_anomalies"] == 0
+            assert res["highest_severity"] == "SAFE"
+        self.execute_test(c, "cleanRfSpectrum_returnsBenedictus", t4)
+
+    # --- SUITE 8: Resource-Frugal Cache & Context Invariant ---
+    def run_frugal_cache_suite(self):
+        c = "com.example.service.ResourceFrugalCacheTest"
+
+        def t1():
+            cache = MockFrugalCache(ttl_sec=300)
+            compute_calls = 0
+
+            def dummy_ai_compute():
+                nonlocal compute_calls
+                compute_calls += 1
+                return {"score": 95, "status": "BENEDICTUS"}
+
+            digest = "Office_5G|00:1A:2B:3C:4D:01|48|5|0|0|False"
+            res1, hit1 = cache.get_or_compute(digest, dummy_ai_compute, now=1000.0)
+            assert hit1 is False
+            assert res1["score"] == 95
+            assert cache.api_call_count == 1
+
+            # Second call within TTL with identical telemetry must hit cache (0 network calls, 0 battery waste)
+            res2, hit2 = cache.get_or_compute(digest, dummy_ai_compute, now=1050.0)
+            assert hit2 is True
+            assert res2 == res1
+            assert cache.api_call_count == 1, "API call count must not increase on cache hit!"
+        self.execute_test(c, "telemetryDigestMatching_returnsCachedReportZeroDrift", t1)
+
+        def t2():
+            cache = MockFrugalCache(ttl_sec=300)
+            calls = 0
+
+            def dummy_compute():
+                nonlocal calls
+                calls += 1
+                return {"audit_id": calls}
+
+            digest_clean = "Office_5G|5|0|False"
+            cache.get_or_compute(digest_clean, dummy_compute, now=1000.0)
+            assert cache.api_call_count == 1
+
+            # Threat appears (Evil twin detected): digest changes -> immediate cache invalidation and recompute
+            digest_threat = "Office_5G|5|1|True"
+            res_threat, hit_threat = cache.get_or_compute(digest_threat, dummy_compute, now=1010.0)
+            assert hit_threat is False
+            assert cache.api_call_count == 2
+            assert res_threat["audit_id"] == 2
+        self.execute_test(c, "threatChange_invalidatesCacheAndTriggersImmediateRecompute", t2)
+
     def run_all(self, target_filter: Optional[str] = None):
         self.t_start = time.perf_counter()
         f = (target_filter or "").lower()
@@ -667,6 +881,8 @@ class SentinelTestBattery:
         run_iot = not f or "iotchipset" in f or "iot" in f
         run_antivirus = not f or "antivirus" in f or "heuristics" in f or "report" in f
         run_idempotency = not f or "idempotency" in f
+        run_rogue = not f or "rogue" in f or "eviltwin" in f or "ap" in f
+        run_cache = not f or "cache" in f or "frugal" in f or "gemini" in f
 
         if run_sanitizer:
             self.run_mac_sanitizer_suite()
@@ -680,6 +896,10 @@ class SentinelTestBattery:
             self.run_antivirus_heuristics_suite()
         if run_idempotency:
             self.run_idempotency_audit_suite()
+        if run_rogue:
+            self.run_rogue_ap_sentry_suite()
+        if run_cache:
+            self.run_frugal_cache_suite()
 
         self.t_end = time.perf_counter()
 
@@ -793,6 +1013,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--iot", action="store_true", help="Execute IotChipsetSecurityEngine unit test suite")
     parser.add_argument("--antivirus", "--heuristics", dest="antivirus", action="store_true", help="Execute Antivirus & DEX heuristics test suite")
     parser.add_argument("--idempotency", action="store_true", help="Execute formal mathematical idempotency verification")
+    parser.add_argument("--rogue-ap", "--eviltwin", dest="rogue_ap", action="store_true", help="Execute Rogue AP & Evil Twin Sentry test suite")
+    parser.add_argument("--cache", "--frugal", dest="cache", action="store_true", help="Execute Resource-Frugal Cache test suite")
     parser.add_argument("--dispatch-datahub", action="store_true", help="Stream test execution scorecard to Apex DataHub (:8721)")
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON scorecard format")
     # Gradle test filter compatibility (e.g., --tests *MacSanitizerTest*)
@@ -819,6 +1041,10 @@ def main() -> int:
         selected_filter = "antivirus"
     elif args.idempotency:
         selected_filter = "idempotency"
+    elif args.rogue_ap:
+        selected_filter = "rogue"
+    elif args.cache:
+        selected_filter = "cache"
 
     # Also check raw sys.argv for backward compatibility with Gradle-style:
     # "SentinelViewModelTest", "SentinelRepositoryTest", "MacSanitizerTest"

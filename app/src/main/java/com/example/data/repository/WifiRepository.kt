@@ -13,12 +13,14 @@ import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
 import com.example.data.model.NetworkHardeningRecommendation
 import com.example.data.model.NetworkRiskAssessment
+import com.example.data.model.RogueApAuditReport
 import com.example.data.model.ThreatLevel
 import com.example.data.model.UnethicalDevice
 import com.example.data.model.WifiConnectionState
 import com.example.data.remote.GeminiService
 import com.example.service.BluetoothSentryScanner
 import com.example.service.NetworkAccessEnforcer
+import com.example.service.RogueApSentryEngine
 import com.example.service.WifiScannerService
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -273,9 +275,18 @@ class WifiRepository(
     suspend fun generateAiOptimization(
         state: WifiConnectionState,
         devices: List<DiscoveredDevice>,
-        accessPoints: List<NearbyAccessPoint>
+        accessPoints: List<NearbyAccessPoint>,
+        rogueApReport: RogueApAuditReport? = null
     ): AiOptimizationReport {
-        return geminiService.analyzeWifiAndOptimize(state, devices, accessPoints)
+        return geminiService.analyzeWifiAndOptimize(state, devices, accessPoints, rogueApReport)
+    }
+
+    fun auditRogueAccessPoints(
+        state: WifiConnectionState,
+        accessPoints: List<NearbyAccessPoint>,
+        whitelistedBssids: Set<String> = emptySet()
+    ): RogueApAuditReport {
+        return RogueApSentryEngine.auditAccessPoints(state, accessPoints, whitelistedBssids)
     }
 
     suspend fun askAiAdvisor(
@@ -301,7 +312,8 @@ class WifiRepository(
         unethicalCount: Int,
         gatewaysCount: Int,
         hasRogueGateway: Boolean,
-        hasArpSpoofing: Boolean
+        hasArpSpoofing: Boolean,
+        rogueApReport: RogueApAuditReport? = null
     ): NetworkRiskAssessment {
         return geminiService.analyzeCurrentNetworkRiskScore(
             telemetry = state,
@@ -311,7 +323,8 @@ class WifiRepository(
             unethicalCount = unethicalCount,
             gatewaysCount = gatewaysCount,
             hasRogueGateway = hasRogueGateway,
-            hasArpSpoofing = hasArpSpoofing
+            hasArpSpoofing = hasArpSpoofing,
+            rogueApReport = rogueApReport
         )
     }
 

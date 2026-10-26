@@ -7,6 +7,7 @@ import com.example.data.model.DiscoveredDevice
 import com.example.data.model.NearbyAccessPoint
 import com.example.data.model.NetworkHardeningRecommendation
 import com.example.data.model.NetworkRiskAssessment
+import com.example.data.model.RogueApAuditReport
 import com.example.data.model.ThreatVectorBreakdown
 import com.example.data.model.UnethicalDevice
 import com.example.data.model.UnethicalThreatType
@@ -39,17 +40,42 @@ class GeminiService {
     private val isApiKeyConfigured: Boolean
         get() = apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY"
 
+    // Frugal In-Memory Telemetry Cache (Prevents redundant API calls and saves battery & mobile data)
+    @Volatile private var cachedReport: AiOptimizationReport? = null
+    @Volatile private var cachedTelemetryDigest: String? = null
+    @Volatile private var lastReportTimestamp: Long = 0L
+
+    @Volatile private var cachedRiskAssessment: NetworkRiskAssessment? = null
+    @Volatile private var cachedRiskDigest: String? = null
+    @Volatile private var lastRiskTimestamp: Long = 0L
+
+    private val CACHE_TTL_MS = 300_000L // 5 minutes TTL
+
     suspend fun analyzeWifiAndOptimize(
         telemetry: WifiConnectionState,
         devices: List<DiscoveredDevice>,
-        accessPoints: List<NearbyAccessPoint>
+        accessPoints: List<NearbyAccessPoint>,
+        rogueApReport: RogueApAuditReport? = null
     ): AiOptimizationReport = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         val unauthorizedCount = devices.count { !it.isAuthorized && !it.isSelf && !it.isGateway }
+        val anomaliesCount = rogueApReport?.totalAnomalies ?: 0
+        val isEvilTwin = rogueApReport?.isEvilTwinDetected == true
+
+        // 1. Resource-Frugal Cache: Evaluate if telemetry digest matches within TTL
+        val digest = "${telemetry.ssid}|${telemetry.bssid}|${telemetry.channel}|${devices.size}|$unauthorizedCount|$anomaliesCount|$isEvilTwin"
+        val existing = cachedReport
+        if (existing != null && cachedTelemetryDigest == digest && (startTime - lastReportTimestamp) < CACHE_TTL_MS) {
+            return@withContext existing
+        }
 
         if (!isApiKeyConfigured) {
             val elapsed = (System.currentTimeMillis() - startTime).coerceAtLeast(1850L)
-            return@withContext generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, elapsed, 450L)
+            val fallback = generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, rogueApReport, elapsed, 450L)
+            cachedReport = fallback
+            cachedTelemetryDigest = digest
+            lastReportTimestamp = startTime
+            return@withContext fallback
         }
 
         val prompt = """
@@ -61,6 +87,7 @@ class GeminiService {
             - Frequency: ${telemetry.frequencyMhz} MHz (Channel ${telemetry.channel}, Band: ${telemetry.band})
             - Subnet Gateway: ${telemetry.gatewayIp}
             - Discovered Devices: ${devices.size} total, with $unauthorizedCount unauthorized/untrusted devices.
+            - Rogue AP / Evil Twin Threat: ${if (isEvilTwin) "CRITICAL: Evil Twin detected! Anomalies: $anomaliesCount" else "None detected."}
             - Nearby Co-Channel & Adjacent Networks: ${accessPoints.size} visible APs.
 
             Provide an expert network audit formatted strictly as valid JSON with the following keys:
@@ -69,7 +96,7 @@ class GeminiService {
               "summary": "<one punchy sentence summarizing network signal and threat status>",
               "optimalChannelRecommendation": "<specific channel advice for 2.4GHz and 5GHz to reduce co-channel interference>",
               "antennaAndPlacementTip": "<physical router location, elevation, and antenna angle recommendations>",
-              "securityAudit": "<analysis of encryption protocol and the $unauthorizedCount unauthorized devices detected>",
+              "securityAudit": "<analysis of encryption protocol, $unauthorizedCount unauthorized devices, and Evil Twin threat>",
               "bandSteeringAdvice": "<advice on 2.4GHz vs 5GHz/6GHz usage based on signal RSSI>",
               "actionItems": ["<Action 1>", "<Action 2>", "<Action 3>", "<Action 4>"]
             }
@@ -79,11 +106,19 @@ class GeminiService {
         try {
             val jsonResponse = callGeminiApi(prompt)
             val elapsed = (System.currentTimeMillis() - startTime).coerceAtLeast(1450L)
-            parseAiReport(jsonResponse, telemetry, devices, accessPoints, unauthorizedCount, elapsed, (elapsed - 300L).coerceAtLeast(800L))
+            val parsed = parseAiReport(jsonResponse, telemetry, devices, accessPoints, unauthorizedCount, rogueApReport, elapsed, (elapsed - 300L).coerceAtLeast(800L))
+            cachedReport = parsed
+            cachedTelemetryDigest = digest
+            lastReportTimestamp = startTime
+            parsed
         } catch (e: Exception) {
             Log.e("GeminiService", "API call failed, using heuristic fallback", e)
             val elapsed = (System.currentTimeMillis() - startTime).coerceAtLeast(1850L)
-            generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, elapsed, 350L)
+            val fallback = generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, rogueApReport, elapsed, 350L)
+            cachedReport = fallback
+            cachedTelemetryDigest = digest
+            lastReportTimestamp = startTime
+            fallback
         }
     }
 
@@ -168,6 +203,7 @@ class GeminiService {
         devices: List<DiscoveredDevice>,
         accessPoints: List<NearbyAccessPoint>,
         unauthorizedCount: Int,
+        rogueApReport: RogueApAuditReport? = null,
         scanRundownMs: Long = 1850L,
         aiLatencyMs: Long = 1200L
     ): AiOptimizationReport {
@@ -195,7 +231,7 @@ class GeminiService {
                 scoreValidityDurationSec = 900L
             )
         } catch (e: Exception) {
-            generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, scanRundownMs, aiLatencyMs)
+            generateLocalHeuristicReport(telemetry, devices, accessPoints, unauthorizedCount, rogueApReport, scanRundownMs, aiLatencyMs)
         }
     }
 
@@ -204,11 +240,21 @@ class GeminiService {
         devices: List<DiscoveredDevice>,
         accessPoints: List<NearbyAccessPoint>,
         unauthorizedCount: Int,
+        rogueApReport: RogueApAuditReport? = null,
         scanRundownMs: Long = 1850L,
         aiLatencyMs: Long = 450L
     ): AiOptimizationReport {
         var score = 100
         val actions = mutableListOf<String>()
+
+        // Rogue AP / Evil Twin Penalty
+        if (rogueApReport?.hasDowngradeThreat == true) {
+            score -= 40
+            actions.add("CRITICAL: Evil Twin Wi-Fi encryption downgrade attack detected on '${telemetry.ssid}'. Avoid connecting!")
+        } else if (rogueApReport?.isEvilTwinDetected == true) {
+            score -= 25
+            actions.add("HIGH ALERT: Impersonator BSSID detected claiming SSID '${telemetry.ssid}'. Verify access point hardware.")
+        }
 
         // Signal penalty
         if (telemetry.rssi < -75) {
@@ -246,8 +292,10 @@ class GeminiService {
         }
 
         return AiOptimizationReport(
-            overallHealthScore = score.coerceIn(20, 100),
+            overallHealthScore = score.coerceIn(10, 100),
             summary = when {
+                rogueApReport?.hasDowngradeThreat == true -> "CRITICAL THREAT: Evil Twin downgrade attack on ${telemetry.ssid}."
+                rogueApReport?.isEvilTwinDetected == true -> "HIGH RISK: Evil Twin rogue AP impersonation active."
                 unauthorizedCount > 0 -> "Security Alert: $unauthorizedCount unauthorized device(s) active on ${telemetry.ssid}."
                 telemetry.rssi < -70 -> "Signal Alert: High path loss detected (-${-telemetry.rssi} dBm). Optimization recommended."
                 else -> "Wi-Fi running in healthy state with ${telemetry.linkSpeedMbps} Mbps link speed."
@@ -425,13 +473,29 @@ class GeminiService {
         unethicalCount: Int,
         gatewaysCount: Int,
         hasRogueGateway: Boolean,
-        hasArpSpoofing: Boolean
+        hasArpSpoofing: Boolean,
+        rogueApReport: RogueApAuditReport? = null
     ): NetworkRiskAssessment = withContext(Dispatchers.IO) {
+        val startTime = System.currentTimeMillis()
+        val isEvilTwin = rogueApReport?.isEvilTwinDetected == true
+        val hasDowngrade = rogueApReport?.hasDowngradeThreat == true
+
+        // Resource-Frugal Cache: Evaluate if risk digest matches within TTL
+        val digest = "${telemetry.ssid}|${devices.size}|$unauthorizedCount|$quarantinedCount|$unethicalCount|$hasRogueGateway|$hasArpSpoofing|$isEvilTwin|$hasDowngrade"
+        val existing = cachedRiskAssessment
+        if (existing != null && cachedRiskDigest == digest && (startTime - lastRiskTimestamp) < CACHE_TTL_MS) {
+            return@withContext existing
+        }
+
         if (!isApiKeyConfigured) {
-            return@withContext generateLocalHeuristicRiskScore(
+            val fallback = generateLocalHeuristicRiskScore(
                 telemetry, devices, unauthorizedCount, quarantinedCount,
-                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing, rogueApReport
             )
+            cachedRiskAssessment = fallback
+            cachedRiskDigest = digest
+            lastRiskTimestamp = startTime
+            return@withContext fallback
         }
 
         val prompt = """
@@ -442,6 +506,7 @@ class GeminiService {
             - Quarantined Devices (ACL Drop): $quarantinedCount devices isolated.
             - Unethical Threat Actors Detected: $unethicalCount (e.g. ARP poisoners, promiscuous sniffers, port scanners).
             - Gateway Topologies: $gatewaysCount gateways detected. (Rogue Gateway Present: $hasRogueGateway, ARP Spoofing Active: $hasArpSpoofing).
+            - Evil Twin / Rogue AP Sentry: ${if (hasDowngrade) "CRITICAL: Wi-Fi encryption downgrade attack active!" else if (isEvilTwin) "HIGH: Evil Twin AP detected!" else "None (Clean RF spectrum)"}
             - Wi-Fi Signal: ${telemetry.rssi} dBm on Channel ${telemetry.channel} (${telemetry.band}).
 
             Output strictly JSON with format:
@@ -451,7 +516,7 @@ class GeminiService {
               "summary": "<one comprehensive sentence summarizing network threat posture>",
               "threatVectors": [
                 {
-                  "vectorName": "<e.g. Unethical Packet Sniffing / Rogue Gateway Spoofing / Unauthorized Subnet Devices / Encryption Hardening>",
+                  "vectorName": "<e.g. Evil Twin / Rogue AP / Unethical Packet Sniffing / Rogue Gateway Spoofing / Unauthorized Subnet Devices / Encryption Hardening>",
                   "score": <integer 0-100>,
                   "severity": "<SAFE | WARNING | CRITICAL>",
                   "detail": "<brief description of the risk factor>"
@@ -468,13 +533,21 @@ class GeminiService {
 
         try {
             val raw = callGeminiApi(prompt)
-            parseRiskAssessment(raw, telemetry, devices, unauthorizedCount, quarantinedCount, unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing)
+            val parsed = parseRiskAssessment(raw, telemetry, devices, unauthorizedCount, quarantinedCount, unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing, rogueApReport)
+            cachedRiskAssessment = parsed
+            cachedRiskDigest = digest
+            lastRiskTimestamp = startTime
+            parsed
         } catch (e: Exception) {
             Log.w("GeminiService", "Gemini API risk score calculation failed, using heuristic engine: ${e.localizedMessage}")
-            generateLocalHeuristicRiskScore(
+            val fallback = generateLocalHeuristicRiskScore(
                 telemetry, devices, unauthorizedCount, quarantinedCount,
-                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing, rogueApReport
             )
+            cachedRiskAssessment = fallback
+            cachedRiskDigest = digest
+            lastRiskTimestamp = startTime
+            fallback
         }
     }
 
@@ -487,7 +560,8 @@ class GeminiService {
         unethicalCount: Int,
         gatewaysCount: Int,
         hasRogueGateway: Boolean,
-        hasArpSpoofing: Boolean
+        hasArpSpoofing: Boolean,
+        rogueApReport: RogueApAuditReport? = null
     ): NetworkRiskAssessment {
         val rawText = extractText(jsonStr).replace("```json", "").replace("```", "").trim()
         return try {
@@ -537,7 +611,7 @@ class GeminiService {
         } catch (e: Exception) {
             generateLocalHeuristicRiskScore(
                 telemetry, devices, unauthorizedCount, quarantinedCount,
-                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing
+                unethicalCount, gatewaysCount, hasRogueGateway, hasArpSpoofing, rogueApReport
             )
         }
     }
@@ -550,11 +624,25 @@ class GeminiService {
         unethicalCount: Int,
         gatewaysCount: Int,
         hasRogueGateway: Boolean,
-        hasArpSpoofing: Boolean
+        hasArpSpoofing: Boolean,
+        rogueApReport: RogueApAuditReport? = null
     ): NetworkRiskAssessment {
         var baseScore = 12
         val vectors = mutableListOf<ThreatVectorBreakdown>()
         val recommendations = mutableListOf<String>()
+
+        // Rogue AP / Evil Twin Risk Vector
+        if (rogueApReport?.hasDowngradeThreat == true) {
+            baseScore += 50
+            vectors.add(ThreatVectorBreakdown("Evil Twin / Rogue AP", 98, "CRITICAL", "Wi-Fi Encryption Downgrade Attack detected on SSID '${telemetry.ssid}'"))
+            recommendations.add(0, "CRITICAL: An adversary AP is broadcasting '${telemetry.ssid}' with downgraded encryption. Avoid auto-connecting!")
+        } else if (rogueApReport?.isEvilTwinDetected == true) {
+            baseScore += 35
+            vectors.add(ThreatVectorBreakdown("Evil Twin / Rogue AP", 85, "CRITICAL", "Evil Twin AP detected impersonating '${telemetry.ssid}'"))
+            recommendations.add(0, "Adversary AP detected claiming '${telemetry.ssid}'. Inspect nearby BSSIDs and whitelist legitimate repeaters.")
+        } else {
+            vectors.add(ThreatVectorBreakdown("Evil Twin / Rogue AP", 5, "SAFE", "No conflicting or spoofed BSSID anomalies detected"))
+        }
 
         // Encryption risk
         val isWeakSecurity = telemetry.securityProtocol.contains("Open", ignoreCase = true) ||

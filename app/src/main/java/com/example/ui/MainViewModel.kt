@@ -27,6 +27,7 @@ import com.example.data.model.DuplicationViolationType
 import com.example.data.model.GatewaySwitchType
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NearbyAccessPoint
+import com.example.data.model.RogueApAuditReport
 import com.example.data.model.AntivirusScannerState
 import com.example.data.model.AppRiskLevel
 import com.example.data.model.AppSecurityScanResult
@@ -137,6 +138,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
 
     private val _nearbyAccessPoints = MutableStateFlow<List<NearbyAccessPoint>>(emptyList())
     val nearbyAccessPoints: StateFlow<List<NearbyAccessPoint>> = _nearbyAccessPoints.asStateFlow()
+
+    private val _rogueApReport = MutableStateFlow(RogueApAuditReport())
+    val rogueApReport: StateFlow<RogueApAuditReport> = _rogueApReport.asStateFlow()
 
     private val _channelCongestionList = MutableStateFlow<List<ChannelCongestion>>(emptyList())
     val channelCongestionList: StateFlow<List<ChannelCongestion>> = _channelCongestionList.asStateFlow()
@@ -931,6 +935,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
             val aps = repository.getNearbyAccessPoints()
             _nearbyAccessPoints.value = aps
             computeChannelCongestion(aps, _wifiState.value.channel)
+            auditRogueAccessPoints(aps, _wifiState.value)
+        }
+    }
+
+    private fun auditRogueAccessPoints(aps: List<NearbyAccessPoint>, state: WifiConnectionState) {
+        val whitelistedBssids = _whitelistedDevices.value.map { it.macAddress }.toSet()
+        val report = repository.auditRogueAccessPoints(state, aps, whitelistedBssids)
+        _rogueApReport.value = report
+
+        if (report.hasDowngradeThreat || report.isEvilTwinDetected) {
+            viewModelScope.launch {
+                report.anomalies.filter { it.severity == "CRITICAL" }.forEach { anomaly ->
+                    repository.recordSecurityAlert(
+                        title = "Evil Twin / Rogue AP Detected",
+                        description = anomaly.detail,
+                        severity = anomaly.severity,
+                        source = "RogueApSentryEngine"
+                    )
+                }
+            }
         }
     }
 
@@ -1161,7 +1185,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                 val report = repository.generateAiOptimization(
                     _wifiState.value,
                     _discoveredDevices.value,
-                    _nearbyAccessPoints.value
+                    _nearbyAccessPoints.value,
+                    _rogueApReport.value
                 )
                 _aiReport.value = report
             } finally {
@@ -2338,7 +2363,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                     unethicalCount = unethicals,
                     gatewaysCount = gateways,
                     hasRogueGateway = hasRogueGateway,
-                    hasArpSpoofing = hasArpSpoofing
+                    hasArpSpoofing = hasArpSpoofing,
+                    rogueApReport = _rogueApReport.value
                 )
                 _networkRiskAssessment.value = assessment
             } catch (e: Exception) {

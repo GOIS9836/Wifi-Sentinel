@@ -106,6 +106,36 @@ data class NearbyAccessPoint(
     val security: String
 )
 
+enum class RogueApAnomalyType(val label: String, val severity: String) {
+    EVIL_TWIN_SSID_SPOOF("Evil Twin SSID Impersonation", "CRITICAL"),
+    SECURITY_DOWNGRADE_ATTACK("Wi-Fi Encryption Downgrade Trap", "CRITICAL"),
+    LAA_RANDOMIZED_BSSID_ROGUE("Randomized MAC Rogue Soft-AP / PineApple", "HIGH"),
+    UNAUTHORIZED_MESH_BSSID("Unrecognized BSSID on Infrastructure SSID", "WARNING"),
+    SIGNAL_DOMINANCE_ANOMALY("Suspicious Signal Dominance Spike", "HIGH")
+}
+
+data class RogueApAnomaly(
+    val ssid: String,
+    val bssid: String,
+    val anomalyType: RogueApAnomalyType,
+    val severity: String,
+    val detail: String,
+    val detectedRssi: Int,
+    val channel: Int,
+    val band: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class RogueApAuditReport(
+    val isEvilTwinDetected: Boolean = false,
+    val hasDowngradeThreat: Boolean = false,
+    val totalAnomalies: Int = 0,
+    val anomalies: List<RogueApAnomaly> = emptyList(),
+    val highestSeverity: String = "SAFE",
+    val threatSummary: String = "No Evil Twin or Rogue AP anomalies detected.",
+    val recommendedAction: String = "Maintain normal operational posture."
+)
+
 data class ChannelCongestion(
     val channel: Int,
     val band: String,

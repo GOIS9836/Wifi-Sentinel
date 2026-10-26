@@ -54,6 +54,7 @@ import com.example.data.model.DuplicationViolationType
 import com.example.data.model.GatewaySwitchType
 import com.example.data.model.GatewayTransitionEvent
 import com.example.data.model.NetworkHardeningRecommendation
+import com.example.data.model.RogueApAuditReport
 import com.example.util.TimeUtils
 import com.example.util.rememberLiveCurrentTime
 import androidx.compose.material3.AlertDialog
@@ -143,6 +144,7 @@ fun SecurityScreen(
     val isAutoNotifyEnabled by viewModel.isAutoNotifyEnabled.collectAsState()
     val summaryReport by viewModel.networkSummaryReport.collectAsState()
     val isGeneratingReport by viewModel.isGeneratingReport.collectAsState()
+    val rogueApReport by viewModel.rogueApReport.collectAsState()
     val liveNow by rememberLiveCurrentTime()
 
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, UNAUTHORIZED, FP_SUPPRESSED, AUTHORIZED
@@ -306,6 +308,16 @@ fun SecurityScreen(
                 onSimulateDuplicateIp = { viewModel.simulateDuplicationBreach(DuplicationViolationType.DUPLICATE_IP) },
                 onSimulateDuplicateMac = { viewModel.simulateDuplicationBreach(DuplicationViolationType.DUPLICATE_MAC) },
                 onSimulateAlienSubnet = { viewModel.simulateDuplicationBreach(DuplicationViolationType.ALIEN_SUBNET) }
+            )
+        }
+
+        // Real-Time Rogue AP & Evil Twin Sentry Card
+        item {
+            RogueApEvilTwinSentryCard(
+                report = rogueApReport,
+                connectedSsid = wifiState.ssid,
+                connectedBssid = wifiState.bssid,
+                onRefreshAps = { viewModel.refreshNearbyAPs() }
             )
         }
 
@@ -2998,6 +3010,171 @@ private fun ZeroToleranceDuplicationGuardCard(
                     modifier = Modifier.height(30.dp)
                 ) {
                     Text("Test Alien Subnet", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RogueApEvilTwinSentryCard(
+    report: RogueApAuditReport,
+    connectedSsid: String,
+    connectedBssid: String,
+    onRefreshAps: () -> Unit
+) {
+    val borderColor = when {
+        report.hasDowngradeThreat || report.isEvilTwinDetected -> CyberRed
+        report.totalAnomalies > 0 -> CyberAmber
+        else -> CyberCyan.copy(alpha = 0.6f)
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(CyberSurface)
+            .border(1.dp, borderColor, RoundedCornerShape(16.dp))
+            .padding(16.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (report.isEvilTwinDetected) CyberRed.copy(alpha = 0.2f)
+                                else CyberCyan.copy(alpha = 0.15f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (report.isEvilTwinDetected) Icons.Default.Warning else Icons.Default.Radar,
+                            contentDescription = "Rogue AP Sentry",
+                            tint = if (report.isEvilTwinDetected) CyberRed else CyberCyan,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "ROGUE AP & EVIL TWIN SENTRY",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "POTRAZ Ch 12:07 • 802.11 RF Impersonation Guard",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onRefreshAps,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh RF Spectrum",
+                        tint = CyberCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Posture Status Badge
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(
+                        when {
+                            report.hasDowngradeThreat -> CyberRed.copy(alpha = 0.15f)
+                            report.isEvilTwinDetected -> CyberAmber.copy(alpha = 0.15f)
+                            else -> CyberGreen.copy(alpha = 0.12f)
+                        }
+                    )
+                    .border(
+                        1.dp,
+                        when {
+                            report.hasDowngradeThreat -> CyberRed.copy(alpha = 0.5f)
+                            report.isEvilTwinDetected -> CyberAmber.copy(alpha = 0.5f)
+                            else -> CyberGreen.copy(alpha = 0.4f)
+                        },
+                        RoundedCornerShape(8.dp)
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text = when {
+                        report.hasDowngradeThreat -> "🔴 [CRIT // DOWNGRADE ATTACK DETECTED]"
+                        report.isEvilTwinDetected -> "🟡 [WARN // EVIL TWIN IMPERSONATION]"
+                        else -> "🟢 [BENEDICTUS // RF SPECTRUM CLEAN]"
+                    },
+                    color = when {
+                        report.hasDowngradeThreat -> CyberRed
+                        report.isEvilTwinDetected -> CyberAmber
+                        else -> CyberGreen
+                    },
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            // Threat Summary
+            Text(
+                text = report.threatSummary,
+                color = TextSecondary,
+                fontSize = 12.sp
+            )
+
+            // Anomalies List (if any)
+            if (report.anomalies.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    report.anomalies.take(3).forEach { anomaly ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(CyberSurfaceElevated)
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "[${anomaly.anomalyType.label}]",
+                                        color = if (anomaly.severity == "CRITICAL") CyberRed else CyberAmber,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        text = "${anomaly.detectedRssi} dBm (Ch ${anomaly.channel})",
+                                        color = TextMuted,
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                                Text(
+                                    text = "BSSID: ${anomaly.bssid} • ${anomaly.detail}",
+                                    color = TextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
