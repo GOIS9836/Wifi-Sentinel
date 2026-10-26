@@ -13,6 +13,7 @@
 
 import sys
 import os
+import re
 import json
 import time
 import hashlib
@@ -89,6 +90,90 @@ def mask_mac_address(mac_address: str) -> str:
     if len(parts) != 6:
         return mac_address
     return f"{parts[0]}:{parts[1]}:**:**:**:{parts[5]}"
+
+# POTRAZ Chapter 12:07 Statutory Definitions
+MSISDN_REGEX = re.compile(r"(\+?263\s?(?:77|78|71|73)\s?\d{3}\s?\d{4}|\b07[7813]\d{7}\b|\b2637\d{8}\b)")
+ICCID_REGEX = re.compile(r"\b(89263\d{13,15}|89\d{17,18})\b")
+IMSI_REGEX = re.compile(r"\b(648\d{12})\b")
+
+BLOCKED_TLDS = {".tk", ".xyz", ".top", ".ru", ".fit", ".pw"}
+FORBIDDEN_CONTENT_KEYWORDS = {
+    "fast-cash-zim", "double-your-crypto", "forex-pyramid", "c2-relay", "keylogger",
+    "botnet", "unrated-media", "dark-relay", "proxy-bypass", "unmasked-subscriber-dump"
+}
+
+def mask_msisdn(msisdn: str) -> str:
+    """
+    Masks Zimbabwean subscriber phone numbers (MSISDN) to protect PII.
+    Example: '+263771234567' -> '+263 77 *** 4567', '0771234567' -> '077 *** 4567'
+    """
+    digits = re.sub(r"\s+", "", msisdn)
+    if digits.startswith("+263") and len(digits) >= 12:
+        prefix = "+263 " + digits[4:6]
+        suffix = digits[-4:]
+        return f"{prefix} *** {suffix}"
+    elif digits.startswith("263") and len(digits) >= 11:
+        prefix = "+263 " + digits[3:5]
+        suffix = digits[-4:]
+        return f"{prefix} *** {suffix}"
+    elif digits.startswith("07") and len(digits) >= 10:
+        prefix = digits[:3]
+        suffix = digits[-4:]
+        return f"{prefix} *** {suffix}"
+    else:
+        return ("****" + digits[-4:]) if len(digits) > 4 else "****"
+
+def mask_iccid(iccid: str) -> str:
+    """
+    Masks SIM Card ICCID hardware identifiers under POTRAZ Section 163.
+    Example: '8926301234567890123' -> '89263-XXXX-XXXX-90123'
+    """
+    clean = iccid.strip()
+    if len(clean) >= 18:
+        prefix = clean[:5]
+        suffix = clean[-5:]
+        return f"{prefix}-XXXX-XXXX-{suffix}"
+    return "89263-XXXX-XXXX-*****"
+
+def mask_imsi(imsi: str) -> str:
+    """
+    Masks IMSI mobile subscriber identity.
+    Example: '648011234567890' -> '648-XX-XXXX-67890'
+    """
+    clean = imsi.strip()
+    if len(clean) >= 15:
+        prefix = clean[:3]
+        suffix = clean[-5:]
+        return f"{prefix}-XX-XXXX-{suffix}"
+    return "648-XX-XXXX-*****"
+
+def sanitize_telecom_pii(raw_text: str) -> str:
+    """
+    Enforces automatic POTRAZ Chapter 12:07 PII scrubbing across any log or payload.
+    """
+    if not raw_text or not raw_text.strip():
+        return raw_text
+    sanitized = MSISDN_REGEX.sub(lambda m: mask_msisdn(m.group(0)), raw_text)
+    sanitized = ICCID_REGEX.sub(lambda m: mask_iccid(m.group(0)), sanitized)
+    sanitized = IMSI_REGEX.sub(lambda m: mask_imsi(m.group(0)), sanitized)
+    return sanitized
+
+def is_potraz_restricted_target(target: str) -> bool:
+    """
+    Validates whether a target host/domain violates statutory POTRAZ content directives.
+    """
+    lower = target.lower().strip()
+    clean_domain = lower
+    for prefix in ("https://", "http://"):
+        if clean_domain.startswith(prefix):
+            clean_domain = clean_domain[len(prefix):]
+    clean_domain = clean_domain.split("/")[0].split(":")[0]
+
+    if any(clean_domain.endswith(tld) for tld in BLOCKED_TLDS):
+        return True
+    if any(kw in lower for kw in FORBIDDEN_CONTENT_KEYWORDS):
+        return True
+    return False
 
 # =============================================================================
 # 2. IOT CHIPSET SECURITY ENGINE MOCK (Hardware Fingerprinting)
@@ -517,6 +602,39 @@ class SentinelTestBattery:
             assert mask_mac_address("SHORT") == "SHORT"
             assert mask_mac_address("INVALID:MAC:LEN:EXTRA:BITS:HERE:NOW") == "INVALID:MAC:LEN:EXTRA:BITS:HERE:NOW"
         self.execute_test(c, "malformedInputsAndEdgeCases_gracefullyHandledWithoutException", t4)
+
+        def t5():
+            masked_intl = mask_msisdn("+263771234567")
+            assert masked_intl == "+263 77 *** 4567", f"Expected '+263 77 *** 4567', got '{masked_intl}'"
+            masked_dom = mask_msisdn("0771234567")
+            assert masked_dom == "077 *** 4567", f"Expected '077 *** 4567', got '{masked_dom}'"
+            masked_noplus = mask_msisdn("263771234567")
+            assert masked_noplus == "+263 77 *** 4567", f"Expected '+263 77 *** 4567', got '{masked_noplus}'"
+        self.execute_test(c, "maskMsisdn_redactsZimbabweanPhoneNumbersUnderChapter1207", t5)
+
+        def t6():
+            masked_iccid = mask_iccid("8926301234567890123")
+            assert masked_iccid == "89263-XXXX-XXXX-90123", f"Expected '89263-XXXX-XXXX-90123', got '{masked_iccid}'"
+            masked_imsi = mask_imsi("648011234567890")
+            assert masked_imsi == "648-XX-XXXX-67890", f"Expected '648-XX-XXXX-67890', got '{masked_imsi}'"
+        self.execute_test(c, "maskIccidAndImsi_shieldsTelecomHardwareIdentities", t6)
+
+        def t7():
+            raw = "Subscriber with MSISDN +263771234567 and ICCID 8926301234567890123 connected."
+            sanitized = sanitize_telecom_pii(raw)
+            assert "+263771234567" not in sanitized
+            assert "8926301234567890123" not in sanitized
+            assert "+263 77 *** 4567" in sanitized
+            assert "89263-XXXX-XXXX-90123" in sanitized
+        self.execute_test(c, "sanitizeTelecomPii_replacesEmbeddedPiiInRawStrings", t7)
+
+        def t8():
+            assert is_potraz_restricted_target("http://malicious-node.xyz/api") is True
+            assert is_potraz_restricted_target("https://dark-relay.net/c2") is True
+            assert is_potraz_restricted_target("https://fast-cash-zim.org/invest") is True
+            assert is_potraz_restricted_target("https://potraz.gov.zw") is False
+            assert is_potraz_restricted_target("https://google.com") is False
+        self.execute_test(c, "isPotrazRestrictedTarget_flagsMaliciousTldsAndKeywords", t8)
 
     # --- SUITE 2: SentinelRepository (Data & Quarantine Layer) ---
     def run_repository_suite(self):
