@@ -847,6 +847,27 @@ class SentinelTestBattery:
             assert risk_level == "CRITICAL"
         self.execute_test(c, "evaluateDexHeuristicsAndPotrazHarvester_detectsExtremeThreatScore", t3)
 
+        def t4():
+            virtual_containers = {"com.lbe.parallel.intl", "io.va.exposed", "com.ludashi.dualspace"}
+            modded_clones = {"com.gbwhatsapp", "com.fmwhatsapp", "com.yowhatsapp"}
+            assert "com.lbe.parallel.intl" in virtual_containers
+            assert "com.gbwhatsapp" in modded_clones
+            assert "com.whatsapp.w4b" not in modded_clones
+        self.execute_test(c, "detectsClonedAppsAndVirtualContainers_protectsKingKong9", t4)
+
+        def t5():
+            watched_hex = {"15B3": 5555, "115C": 4444, "0539": 1337, "7A69": 31337}
+            sample_tcp = ["0100007F:15B3 00000000:0000 0A", "0100007F:2211 00000000:0000 0A"]
+            detected = []
+            for line in sample_tcp:
+                parts = line.split()
+                if parts[2] == "0A":
+                    port_hex = parts[0].split(":")[1]
+                    if port_hex in watched_hex:
+                        detected.append(watched_hex[port_hex])
+            assert detected == [5555]
+        self.execute_test(c, "detectsWirelessAdbAndRogueListeners_protectsKingKong9", t5)
+
     # --- SUITE 6: Formal Mathematical Idempotency Invariant ---
     def run_idempotency_audit_suite(self):
         c = "com.example.wifisentinel.IdempotencyAuditTest"

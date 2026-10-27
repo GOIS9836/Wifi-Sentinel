@@ -18,6 +18,7 @@ import com.example.data.model.ThreatLevel
 import com.example.data.model.UnethicalDevice
 import com.example.data.model.WifiConnectionState
 import com.example.data.remote.GeminiService
+import com.example.security.MacSanitizer
 import com.example.service.BluetoothSentryScanner
 import com.example.service.NetworkAccessEnforcer
 import com.example.service.RogueApSentryEngine
@@ -212,10 +213,12 @@ class WifiRepository(
         severity: String = "CRITICAL",
         confidencePercent: Int = 99
     ) {
+        val safeTitle = MacSanitizer.sanitizeTelecomPii(title)
+        val safeDescription = MacSanitizer.sanitizeTelecomPii(description)
         database.securityAlertDao().insert(
             SecurityAlertEntity(
-                title = title,
-                description = description,
+                title = safeTitle,
+                description = safeDescription,
                 deviceIp = deviceIp,
                 deviceMac = deviceMac,
                 severity = severity,

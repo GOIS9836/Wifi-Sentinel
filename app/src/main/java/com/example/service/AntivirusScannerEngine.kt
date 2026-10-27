@@ -48,6 +48,30 @@ object AntivirusScannerEngine {
         setOf("android.permission.READ_SMS", "android.permission.RECEIVE_SMS", "android.permission.INTERNET")
     )
 
+    private val VIRTUAL_CONTAINER_PACKAGES = setOf(
+        "com.lbe.parallel.intl",
+        "io.va.exposed",
+        "com.excelliance.dualaid",
+        "com.ludashi.dualspace",
+        "com.polestar.super.clone",
+        "info.cloneapp.mochat.in.goast",
+        "com.dualspace.appcloner"
+    )
+
+    private val MODDED_CLONE_PACKAGES = setOf(
+        "com.gbwhatsapp",
+        "com.fmwhatsapp",
+        "com.yowhatsapp",
+        "com.ogwhatsapp",
+        "com.whatsapp.plus",
+        "com.whatsapp.w4b.clone"
+    )
+
+    fun isClonedOrVirtualContainerPackage(packageName: String): Boolean {
+        val clean = packageName.trim().lowercase()
+        return clean in VIRTUAL_CONTAINER_PACKAGES || clean in MODDED_CLONE_PACKAGES
+    }
+
     fun scanAllApps(context: Context): Flow<ScanProgressEvent> = flow {
         val pm = context.packageManager
         val packages = try {
@@ -280,6 +304,16 @@ object AntivirusScannerEngine {
                 reasons.add("Application built with debuggable flag enabled (increased vulnerability)")
             }
 
+            // 11. Virtual Container & Modded Clone Detection (KingKong 9 / Nodes-Pergamus Guard)
+            val pkgLower = pkg.packageName.lowercase()
+            if (pkgLower in VIRTUAL_CONTAINER_PACKAGES) {
+                riskScore += 65
+                reasons.add("POTRAZ Chapter 12:07 Alert: Virtual App Container / Parallel Space detected (bypasses Android UID sandbox)")
+            } else if (pkgLower in MODDED_CLONE_PACKAGES) {
+                riskScore += 70
+                reasons.add("POTRAZ Chapter 12:07 Alert: Tampered / Re-signed Modded Clone APK detected (credential & chat exfiltration vector)")
+            }
+
             // Merge findings from AppSecurityAnalyzer
             analyzerResult?.findings?.forEach { finding ->
                 val findingText = "${finding.title}: ${finding.description}"
@@ -501,6 +535,14 @@ object AntivirusScannerEngine {
             recommendations.add("Revoke unverified Device Administrator access in Android Security Settings to prevent persistence and uninstall lockout.")
         }
 
+        // 7. Wireless ADB Port 5555 & Backdoor Socket Sentry (KingKong 9 / Nodes-Pergamus Guard)
+        val roguePorts = checkRogueLocalListeners()
+        if (roguePorts.isNotEmpty()) {
+            securityScore -= 35
+            vulnerabilities.add("Rogue Local TCP Listener(s) Active on Port(s): ${roguePorts.joinToString(", ")} (Wireless ADB / C2 vector)")
+            recommendations.add("Terminate unauthorized listening sockets (especially TCP 5555 Wireless ADB) immediately.")
+        }
+
         return SystemSecurityAudit(
             isRootDetected = isRooted,
             isUsbDebuggingEnabled = isAdb,
@@ -538,6 +580,45 @@ object AntivirusScannerEngine {
         }
 
         return false
+    }
+
+    /**
+     * Inspects /proc/net/tcp and /proc/net/tcp6 for unauthorized listening ports:
+     * - 5555 (0x15B3): Wireless ADB over TCP
+     * - 4444 (0x115C): Metasploit / Reverse Shell
+     * - 1337 (0x0539): Common Backdoor / C2
+     * - 31337 (0x7A69): Back Orifice / RAT
+     */
+    fun checkRogueLocalListeners(): List<Int> {
+        val watchedHexPorts = mapOf(
+            "15B3" to 5555,
+            "115C" to 4444,
+            "0539" to 1337,
+            "7A69" to 31337
+        )
+        val detected = mutableSetOf<Int>()
+        val procFiles = listOf("/proc/net/tcp", "/proc/net/tcp6")
+
+        for (path in procFiles) {
+            try {
+                val f = File(path)
+                if (!f.exists() || !f.canRead()) continue
+                f.forEachLine { line ->
+                    val parts = line.trim().split(Regex("\\s+"))
+                    if (parts.size >= 4) {
+                        val localAddr = parts[1].uppercase()
+                        val state = parts[3].uppercase()
+                        if (state == "0A" && localAddr.contains(":")) {
+                            val portHex = localAddr.substringAfter(":")
+                            watchedHexPorts[portHex]?.let { detected.add(it) }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Non-root userland fallback if /proc/net/tcp is restricted
+            }
+        }
+        return detected.sorted()
     }
 
     sealed class ScanProgressEvent {
