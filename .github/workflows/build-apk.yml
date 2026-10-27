@@ -76,10 +76,10 @@ jobs:
           **Node Identifier**: Nodes-Pergamus | **Standards**: POTRAZ CDPA [Chapter 12:07] • CISSP D5/D8 • SSCP D1
 
           #### 🛡️ Release Highlights:
-          - **False Positive Mitigation & Zero Tolerance**: Kernel ARP incomplete flag filtering (0x0), placeholder MAC isolation, and bridge MAC whitelisting (B4:0F:3B:7F:A3:F0).
-          - **Strict Zero-Tolerance IoT Policy**: Automated detection, hardware profiling, and isolation of rogue Espressif (ESP32/ESP8266), Tuya/Realtek, and Raspberry Pi audit hardware.
-          - **IoT Telemetry Sinkholes**: 0.0.0.0 null-routing for unauthorized smart home and microcontroller telemetry (MQTT 1883, SSDP 1900, mDNS 5353).
-          - **Mobile Privacy LAA Protection**: Differentiates standard smartphone MAC randomization from active stealth clones.
-          - **24-Test SOC Tactical Battery**: 100% test coverage with Apex DataHub streaming integration (:8721).
-          - **POTRAZ Chapter 12:07 Privacy Invariant**: Salted HMAC-SHA256 pseudonymized identifiers and 0.00% drift." \
+          - **POTRAZ Chapter 12:07 Statutory Baseline**: Native MSISDN, SIM ICCID, and IMSI pseudonymization (`MacSanitizer.kt`), restricted TLD/C2 sinkhole filtering, and Room SQLite alert PII scrubbing.
+          - **Cubot KingKong 9 Mobile Fortress Guard**: Virtual container (`Parallel Space`, `VirtualXposed`) and modded clone APK (`GBWhatsApp`, `FMWhatsApp`) detection alongside Wireless ADB port `5555` (`0x15B3`) and local backdoor socket inspection.
+          - **Real-Time Rogue AP & Evil Twin Sentry**: Detects security downgrade attacks (WPA2/WPA3 to OPEN/WEP), LAA randomized BSSID SoftAPs, and unauthorized mesh beacons.
+          - **Resource-Frugal Gemini AI Cache**: Deterministic SHA-256 telemetry digest caching with 15-minute TTL and zero-drift reuse.
+          - **Strict Zero-Tolerance IoT Policy**: Automated detection and isolation of rogue Espressif (ESP32/ESP8266), Tuya/Realtek, and Raspberry Pi audit hardware.
+          - **36-Test SOC Tactical Battery**: 100% test coverage with Apex DataHub streaming integration (:8721) and 0.00% drift." \
             --latest
