@@ -12,9 +12,11 @@ import androidx.room.RoomDatabase
         SecurityAlertEntity::class,
         TrustedGateway::class,
         com.example.wifisentinel.data.local.SentinelDeviceEntity::class,
-        com.example.wifisentinel.data.local.SentinelAlertEntity::class
+        com.example.wifisentinel.data.local.SentinelAlertEntity::class,
+        NetworkConnectionHistoryEntity::class,
+        DetectedThreatEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -24,6 +26,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun trustedGatewayDao(): TrustedGatewayDao
     abstract fun sentinelDeviceDao(): com.example.wifisentinel.data.local.SentinelDeviceDao
     abstract fun sentinelAlertDao(): com.example.wifisentinel.data.local.SentinelAlertDao
+    abstract fun networkConnectionHistoryDao(): NetworkConnectionHistoryDao
+    abstract fun detectedThreatDao(): DetectedThreatDao
 
     companion object {
         @Volatile

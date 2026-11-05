@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Alarm
@@ -1276,7 +1277,7 @@ fun AppSecurityCard(
                             border = BorderStroke(1.dp, CyberBorder),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary)
                         ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = "Details", modifier = Modifier.size(14.dp))
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Details", modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("App Info", fontSize = 11.sp)
                         }

@@ -70,6 +70,15 @@ object RogueApSentryEngine {
                 if (apBssid != connectedBssid && !approved.contains(apBssid)) {
                     val isDowngrade = isSecurityDowngraded(connectedSec, apSec)
                     val isLaa = isLocallyAdministeredMac(apBssid)
+                    val isSameHardwareOui = isSameHardwareOui(connectedBssid, apBssid)
+                    val isCoLocatedMultiBandRadio = isSameHardwareOui && !isDowngrade && !isLaa &&
+                            (apSec.equals(connectedSec, ignoreCase = true) || (connectedSec.contains("WPA") && apSec.contains("WPA")))
+
+                    // If it is a verified co-located radio of the exact same hardware router on another band, suppress false alarm
+                    if (isCoLocatedMultiBandRadio) {
+                        continue
+                    }
+
                     val isSignalDominance = (ap.rssi - connectedState.rssi) >= 25 && ap.rssi > -45
 
                     when {
@@ -187,5 +196,12 @@ object RogueApSentryEngine {
         }
 
         return false
+    }
+
+    private fun isSameHardwareOui(mac1: String, mac2: String): Boolean {
+        if (mac1.length < 8 || mac2.length < 8) return false
+        val prefix1 = mac1.substring(0, 8)
+        val prefix2 = mac2.substring(0, 8)
+        return prefix1.equals(prefix2, ignoreCase = true)
     }
 }

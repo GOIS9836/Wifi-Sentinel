@@ -74,6 +74,11 @@ import com.example.data.model.TrialErrorEntry
 import com.example.data.model.TrialCategory
 import com.example.data.model.RecurringBetaTester
 import com.example.data.model.BetaFlightRunResult
+import com.example.data.model.LinuxEndpointNode
+import com.example.data.model.LinuxEndpointAlert
+import com.example.data.model.LinuxHubServerState
+import com.example.service.LinuxSentryManager
+import com.example.service.LinuxSentryHubServer
 import android.net.Uri
 import android.provider.Settings
 import kotlinx.coroutines.Job
@@ -181,6 +186,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     private val _isZeroFpEngineActive = MutableStateFlow(true)
     val isZeroFpEngineActive: StateFlow<Boolean> = _isZeroFpEngineActive.asStateFlow()
     val isZeroToleranceToFalsePositivesActive: StateFlow<Boolean> = _isZeroFpEngineActive.asStateFlow()
+
+    // Strict Zero-Trust Nearby Device Isolation ("I Don't Trust Nearby Devices")
+    private val _isStrictNearbyDistrustActive = MutableStateFlow(false)
+    val isStrictNearbyDistrustActive: StateFlow<Boolean> = _isStrictNearbyDistrustActive.asStateFlow()
+
+    private val _blockedNearbyBssids = MutableStateFlow<Set<String>>(emptySet())
+    val blockedNearbyBssids: StateFlow<Set<String>> = _blockedNearbyBssids.asStateFlow()
+
+    private val _trustedNearbyBssids = MutableStateFlow<Set<String>>(
+        setOf("B4:0F:3B:7F:A3:F0", "2C:3B:70:C9:64:DF")
+    )
+    val trustedNearbyBssids: StateFlow<Set<String>> = _trustedNearbyBssids.asStateFlow()
 
     private val _falsePositivesSuppressedCount = MutableStateFlow(6)
     val falsePositivesSuppressedCount: StateFlow<Int> = _falsePositivesSuppressedCount.asStateFlow()
@@ -505,6 +522,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         try {
             NetworkMonitorService.start(application)
         } catch (e: Exception) {
+            // Non-blocking in headless test runtime
+        }
+
+        try {
+            LinuxSentryHubServer.start()
+            LinuxSentryManager.updateServerIp(_wifiState.value.ipAddress.ifBlank { "127.0.0.1" })
+        } catch (_: Exception) {
             // Non-blocking in headless test runtime
         }
     }
@@ -847,11 +871,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
             _isSubnetScanning.value = true
             try {
                 val devices = repository.discoverNetworkDevices(_wifiState.value.ipAddress)
-                val processedDevices = if (_isZeroTolerancePolicyActive.value) {
+                val processedDevices = if (_isZeroTolerancePolicyActive.value || _isStrictNearbyDistrustActive.value) {
                     devices.map { dev ->
                         val isSuppressed = dev.isFalsePositiveSuppressed || suppressedDeviceMacs.contains(dev.macAddress.uppercase())
-                        val isBenignPrivateMac = dev.isRandomizedMac || isLocallyAdministeredMac(dev.macAddress)
-                        val shouldBlock = if (_isZeroFpEngineActive.value) {
+                        val isBenignPrivateMac = (dev.isRandomizedMac || isLocallyAdministeredMac(dev.macAddress)) && !_isStrictNearbyDistrustActive.value
+                        val shouldBlock = if (_isStrictNearbyDistrustActive.value) {
+                            !dev.isAuthorized && !dev.isSelf && !dev.isGateway && !isSuppressed
+                        } else if (_isZeroFpEngineActive.value) {
                             !dev.isAuthorized && !dev.isSelf && !dev.isGateway && !isSuppressed && !isBenignPrivateMac
                         } else {
                             !dev.isAuthorized && !dev.isSelf && !dev.isGateway && !isSuppressed
@@ -859,7 +885,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
 
                         if (shouldBlock) {
                             repository.setDeviceBlocked(dev.macAddress, true)
-                            dev.copy(isBlocked = true)
+                            networkAccessEnforcer.blockDeviceNetworkAccess(dev.macAddress, dev.ip, dev.vendor)
+                            dev.copy(
+                                isBlocked = true,
+                                responseTimeMs = 0L,
+                                corroborationVector = if (_isStrictNearbyDistrustActive.value) {
+                                    "Zero-Trust Nearby Lockdown • Untrusted Host Isolated"
+                                } else {
+                                    dev.corroborationVector
+                                }
+                            )
                         } else if (_isZeroFpEngineActive.value && isBenignPrivateMac && !dev.isAuthorized && !dev.isBlocked) {
                             dev.copy(
                                 isFalsePositiveSuppressed = true,
@@ -934,6 +969,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         viewModelScope.launch {
             val aps = repository.getNearbyAccessPoints()
             _nearbyAccessPoints.value = aps
+            if (_isStrictNearbyDistrustActive.value) {
+                val connectedBssid = _wifiState.value.bssid.uppercase().trim()
+                val trustedSet = _trustedNearbyBssids.value + whitelistedDevices.value.map { it.macAddress.uppercase().trim() }
+                val updatedBlocked = _blockedNearbyBssids.value.toMutableSet()
+                aps.forEach { ap ->
+                    val bssidNorm = ap.bssid.uppercase().trim()
+                    if (bssidNorm.isNotBlank() && bssidNorm != connectedBssid && !trustedSet.contains(bssidNorm)) {
+                        updatedBlocked.add(bssidNorm)
+                        networkAccessEnforcer.blockDeviceNetworkAccess(bssidNorm, "", "Untrusted Nearby AP (${ap.ssid})")
+                    }
+                }
+                _blockedNearbyBssids.value = updatedBlocked
+            }
             computeChannelCongestion(aps, _wifiState.value.channel)
             auditRogueAccessPoints(aps, _wifiState.value)
         }
@@ -1612,7 +1660,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         val newlyLockedHosts = _discoveredDevices.value.filter {
             !it.isAuthorized && !it.isSelf && !it.isGateway && !it.isBlocked &&
             !it.isFalsePositiveSuppressed &&
-            (!_isZeroFpEngineActive.value || (!it.isRandomizedMac && it.confidencePercent >= 90))
+            (_isStrictNearbyDistrustActive.value || !_isZeroFpEngineActive.value || (!it.isRandomizedMac && it.confidencePercent >= 90))
         }
         for (host in newlyLockedHosts) {
             networkAccessEnforcer.blockDeviceNetworkAccess(host.macAddress, host.ip, host.vendor)
@@ -1620,7 +1668,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
         _discoveredDevices.value = _discoveredDevices.value.map { dev ->
             if (!dev.isAuthorized && !dev.isSelf && !dev.isGateway &&
                 !dev.isFalsePositiveSuppressed &&
-                (!_isZeroFpEngineActive.value || (!dev.isRandomizedMac && dev.confidencePercent >= 90))
+                (_isStrictNearbyDistrustActive.value || !_isZeroFpEngineActive.value || (!dev.isRandomizedMac && dev.confidencePercent >= 90))
             ) {
                 dev.copy(
                     isBlocked = true,
@@ -1638,6 +1686,100 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
                 triggerIntruderHapticAlert()
             }
         }
+    }
+
+    fun toggleStrictNearbyDistrust(enabled: Boolean) {
+        _isStrictNearbyDistrustActive.value = enabled
+        if (enabled) {
+            enforceStrictNearbyDistrustLockdown()
+        }
+    }
+
+    /**
+     * Strictly idempotent Zero-Trust Nearby Lockdown across LAN hosts, nearby Wi-Fi AP BSSIDs,
+     * and Bluetooth LE perimeter devices.
+     */
+    fun enforceStrictNearbyDistrustLockdown() {
+        _isStrictNearbyDistrustActive.value = true
+        _isZeroTolerancePolicyActive.value = true
+        _isBtZeroToleranceShieldActive.value = true
+
+        // 1. Lock down all unwhitelisted LAN hosts (including randomized/private MACs)
+        lockdownAllUnauthorizedHosts()
+
+        // 2. Isolate all non-connected, untrusted nearby Wi-Fi Access Point BSSIDs
+        val connectedBssid = _wifiState.value.bssid.uppercase().trim()
+        val trustedSet = _trustedNearbyBssids.value + whitelistedDevices.value.map { it.macAddress.uppercase().trim() }
+        val updatedBlockedBssids = _blockedNearbyBssids.value.toMutableSet()
+        var newlyBlockedAps = 0
+        _nearbyAccessPoints.value.forEach { ap ->
+            val bssidNorm = ap.bssid.uppercase().trim()
+            if (bssidNorm.isNotBlank() && bssidNorm != connectedBssid && !trustedSet.contains(bssidNorm)) {
+                if (updatedBlockedBssids.add(bssidNorm)) {
+                    newlyBlockedAps++
+                }
+                networkAccessEnforcer.blockDeviceNetworkAccess(bssidNorm, "", "Untrusted Nearby AP (${ap.ssid})")
+            }
+        }
+        _blockedNearbyBssids.value = updatedBlockedBssids
+
+        // 3. Quarantine all untrusted Bluetooth perimeter devices
+        perimeterBtDevices.value.forEach { bt ->
+            if (!bt.isTrusted && !bt.isQuarantined) {
+                repository.toggleBtQuarantine(bt.address)
+                networkAccessEnforcer.blockDeviceNetworkAccess(bt.address, "", bt.name)
+            }
+        }
+
+        if (newlyBlockedAps > 0) {
+            viewModelScope.launch {
+                repository.recordSecurityAlert(
+                    title = "ZERO-TRUST NEARBY PERIMETER LOCKDOWN",
+                    description = "Strict Nearby Distrust enforced: $newlyBlockedAps nearby Access Point BSSID(s), unauthorized LAN peers, and untrusted BLE devices isolated.",
+                    deviceIp = _wifiState.value.gatewayIp,
+                    deviceMac = connectedBssid,
+                    severity = "WARNING"
+                )
+            }
+        }
+    }
+
+    fun toggleBlockNearbyAp(ap: NearbyAccessPoint) {
+        val norm = ap.bssid.uppercase().trim()
+        val connectedBssid = _wifiState.value.bssid.uppercase().trim()
+        if (norm == connectedBssid) return
+
+        val updated = _blockedNearbyBssids.value.toMutableSet()
+        if (updated.contains(norm)) {
+            updated.remove(norm)
+            networkAccessEnforcer.unblockDeviceNetworkAccess(norm)
+        } else {
+            updated.add(norm)
+            val trusted = _trustedNearbyBssids.value.toMutableSet()
+            trusted.remove(norm)
+            _trustedNearbyBssids.value = trusted
+            networkAccessEnforcer.blockDeviceNetworkAccess(norm, "", "Untrusted Nearby AP (${ap.ssid})")
+        }
+        _blockedNearbyBssids.value = updated
+    }
+
+    fun toggleTrustNearbyAp(ap: NearbyAccessPoint) {
+        val norm = ap.bssid.uppercase().trim()
+        val trusted = _trustedNearbyBssids.value.toMutableSet()
+        val blocked = _blockedNearbyBssids.value.toMutableSet()
+        if (trusted.contains(norm)) {
+            trusted.remove(norm)
+            if (_isStrictNearbyDistrustActive.value && !norm.equals(_wifiState.value.bssid, ignoreCase = true)) {
+                blocked.add(norm)
+                networkAccessEnforcer.blockDeviceNetworkAccess(norm, "", "Untrusted Nearby AP (${ap.ssid})")
+            }
+        } else {
+            trusted.add(norm)
+            blocked.remove(norm)
+            networkAccessEnforcer.unblockDeviceNetworkAccess(norm)
+        }
+        _trustedNearbyBssids.value = trusted
+        _blockedNearbyBssids.value = blocked
     }
 
     fun simulateTransientFalsePositive() {
@@ -2790,6 +2932,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     fun runDailyBetaFlightSuite(onComplete: ((BetaFlightRunResult) -> Unit)? = null) =
         workspaceClusterManager.runDailyBetaFlightSuite(onComplete)
 
+    // ==========================================
+    // LINUX DESKTOP SENTRY & HUB TELEMETRY
+    // ==========================================
+    val linuxNodes: StateFlow<List<LinuxEndpointNode>> = LinuxSentryManager.linuxNodes
+    val linuxAlerts: StateFlow<List<LinuxEndpointAlert>> = LinuxSentryManager.recentAlerts
+    val linuxHubState: StateFlow<LinuxHubServerState> = LinuxSentryManager.hubState
+
+    fun toggleLinuxHubServer() {
+        if (linuxHubState.value.isRunning) {
+            LinuxSentryHubServer.stop()
+        } else {
+            LinuxSentryHubServer.start()
+        }
+    }
+
+    fun toggleIsolateLinuxNode(nodeId: String) {
+        LinuxSentryManager.toggleIsolateNode(nodeId)
+    }
+
+    fun removeLinuxNode(nodeId: String) {
+        LinuxSentryManager.removeNode(nodeId)
+    }
+
+    fun registerManualLinuxNode(hostname: String, ip: String, distro: String) {
+        LinuxSentryManager.registerManualNode(hostname, ip, distro)
+    }
+
     // =========================================================================
     // COMPLIANT SELF-DEFENSE & PRIVACY GUARD ACTIONS (NETWORK GUARD & MAC SANITIZER)
     // =========================================================================
@@ -3028,6 +3197,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application), G
     override fun onCleared() {
         super.onCleared()
         guardManager.stopMonitoring()
+        try {
+            LinuxSentryHubServer.stop()
+        } catch (_: Exception) {}
     }
 }
 

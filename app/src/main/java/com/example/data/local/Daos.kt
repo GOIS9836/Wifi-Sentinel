@@ -133,3 +133,99 @@ interface TrustedGatewayDao {
     @Query("DELETE FROM trusted_gateways")
     suspend fun clearAll()
 }
+
+@Dao
+interface NetworkConnectionHistoryDao {
+    @Query("SELECT * FROM network_connection_history ORDER BY connectedTimestamp DESC")
+    fun getAllConnectionHistory(): Flow<List<NetworkConnectionHistoryEntity>>
+
+    @Query("SELECT * FROM network_connection_history WHERE ssid = :ssid ORDER BY connectedTimestamp DESC")
+    fun getHistoryForSsid(ssid: String): Flow<List<NetworkConnectionHistoryEntity>>
+
+    @Query("SELECT * FROM network_connection_history WHERE bssid = :bssid ORDER BY connectedTimestamp DESC")
+    fun getHistoryForBssid(bssid: String): Flow<List<NetworkConnectionHistoryEntity>>
+
+    @Query("SELECT * FROM network_connection_history ORDER BY connectedTimestamp DESC LIMIT :limit")
+    suspend fun getRecentConnections(limit: Int = 20): List<NetworkConnectionHistoryEntity>
+
+    @Query("SELECT * FROM network_connection_history WHERE disconnectedTimestamp IS NULL ORDER BY connectedTimestamp DESC LIMIT 1")
+    suspend fun getActiveConnection(): NetworkConnectionHistoryEntity?
+
+    @Query("SELECT * FROM network_connection_history WHERE id = :id LIMIT 1")
+    suspend fun getConnectionById(id: Long): NetworkConnectionHistoryEntity?
+
+    @Query("SELECT COUNT(*) FROM network_connection_history")
+    fun getConnectionCount(): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(connection: NetworkConnectionHistoryEntity): Long
+
+    @Update
+    suspend fun update(connection: NetworkConnectionHistoryEntity)
+
+    @Query("UPDATE network_connection_history SET disconnectedTimestamp = :disconnectedTimestamp, durationSeconds = :durationSeconds WHERE id = :id")
+    suspend fun closeSession(id: Long, disconnectedTimestamp: Long, durationSeconds: Long)
+
+    @Query("UPDATE network_connection_history SET safetyScore = :score WHERE id = :id")
+    suspend fun updateSafetyScore(id: Long, score: Int)
+
+    @Query("DELETE FROM network_connection_history WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM network_connection_history WHERE connectedTimestamp < :cutoffTimestamp")
+    suspend fun deleteOlderThan(cutoffTimestamp: Long): Int
+
+    @Query("DELETE FROM network_connection_history")
+    suspend fun clearAll()
+}
+
+@Dao
+interface DetectedThreatDao {
+    @Query("SELECT * FROM detected_threats ORDER BY timestamp DESC")
+    fun getAllThreats(): Flow<List<DetectedThreatEntity>>
+
+    @Query("SELECT * FROM detected_threats WHERE isMitigated = 0 AND isFalsePositive = 0 ORDER BY timestamp DESC")
+    fun getActiveThreats(): Flow<List<DetectedThreatEntity>>
+
+    @Query("SELECT * FROM detected_threats WHERE severity = :severity ORDER BY timestamp DESC")
+    fun getThreatsBySeverity(severity: String): Flow<List<DetectedThreatEntity>>
+
+    @Query("SELECT * FROM detected_threats WHERE threatType = :threatType ORDER BY timestamp DESC")
+    fun getThreatsByType(threatType: String): Flow<List<DetectedThreatEntity>>
+
+    @Query("SELECT COUNT(*) FROM detected_threats WHERE isMitigated = 0 AND isFalsePositive = 0")
+    fun getActiveThreatCount(): Flow<Int>
+
+    @Query("SELECT * FROM detected_threats WHERE id = :id LIMIT 1")
+    suspend fun getThreatById(id: Long): DetectedThreatEntity?
+
+    @Query("SELECT * FROM detected_threats ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentThreatsList(limit: Int = 20): List<DetectedThreatEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(threat: DetectedThreatEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(threats: List<DetectedThreatEntity>)
+
+    @Update
+    suspend fun update(threat: DetectedThreatEntity)
+
+    @Query("UPDATE detected_threats SET isMitigated = :isMitigated, mitigationAction = :mitigationAction WHERE id = :id")
+    suspend fun updateMitigation(id: Long, isMitigated: Boolean, mitigationAction: String)
+
+    @Query("UPDATE detected_threats SET isFalsePositive = 1, isMitigated = 1 WHERE id = :id")
+    suspend fun markFalsePositive(id: Long)
+
+    @Query("UPDATE detected_threats SET isFalsePositive = 1, isMitigated = 1 WHERE sourceMac = :mac")
+    suspend fun markFalsePositiveByMac(mac: String)
+
+    @Query("DELETE FROM detected_threats WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM detected_threats WHERE timestamp < :cutoffTimestamp")
+    suspend fun deleteOlderThan(cutoffTimestamp: Long): Int
+
+    @Query("DELETE FROM detected_threats")
+    suspend fun clearAll()
+}

@@ -13,6 +13,7 @@ import androidx.compose.ui.text.AnnotatedString
 import com.example.security.GatewayDiagnosticsResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -531,7 +532,7 @@ private fun RealTimeThreatMetricsGrid(
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = if (quarantinedCount > 0) CyberRed else CyberCyan
                         ),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                             brush = Brush.horizontalGradient(listOf(CyberBorder, CyberCyan))
                         )
                     ) {
@@ -625,18 +626,16 @@ private fun RealTimeThreatMetricsGrid(
                                         if (isSelected) CyberCyan else Color.Transparent,
                                         RoundedCornerShape(6.dp)
                                     )
+                                    .clickable { onFrequencyChange(sec) }
                                     .padding(horizontal = 6.dp, vertical = 4.dp)
                                     .testTag("freq_chip_${sec}s"),
                                 contentAlignment = Alignment.Center
                             ) {
-                                androidx.compose.foundation.text.ClickableText(
-                                    text = androidx.compose.ui.text.AnnotatedString("${sec}s"),
-                                    style = androidx.compose.ui.text.TextStyle(
-                                        color = if (isSelected) CyberCyan else TextSecondary,
-                                        fontSize = 10.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    ),
-                                    onClick = { onFrequencyChange(sec) }
+                                Text(
+                                    text = "${sec}s",
+                                    color = if (isSelected) CyberCyan else TextSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
                         }
@@ -727,7 +726,7 @@ private fun GeminiNetworkRiskCard(
                             .testTag("recalculate_risk_button"),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberCyan),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                             brush = Brush.horizontalGradient(listOf(CyberCyan, CyberTeal))
                         )
                     ) {
@@ -956,7 +955,7 @@ private fun WifiSentinelUnethicalsHeader(
                     .testTag("simulate_unethical_button"),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberAmber),
-                border = ButtonDefaults.outlinedButtonBorder.copy(
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                     brush = Brush.horizontalGradient(listOf(CyberAmber, CyberRed))
                 )
             ) {
@@ -1250,7 +1249,7 @@ private fun MultiGatewaysManagementHeader(
                         .testTag("simulate_rogue_gateway_button"),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberRed),
-                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                    border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                         brush = Brush.horizontalGradient(listOf(CyberRed, CyberAmber))
                     )
                 ) {
@@ -1600,7 +1599,7 @@ private fun DashboardShortcutsRow(
                 .testTag("shortcut_host_radar_button"),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberCyan),
-            border = ButtonDefaults.outlinedButtonBorder.copy(
+            border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                 brush = Brush.horizontalGradient(listOf(CyberCyan, CyberTeal))
             )
         ) {
@@ -1617,7 +1616,7 @@ private fun DashboardShortcutsRow(
                 .testTag("shortcut_sentry_button"),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberPurple),
-            border = ButtonDefaults.outlinedButtonBorder.copy(
+            border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                 brush = Brush.horizontalGradient(listOf(CyberPurple, CyberCyan))
             )
         ) {
@@ -1834,7 +1833,7 @@ private fun SimulateUnethicalDialog(
                         onClick = { onSelect(type) },
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
+                        border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                             brush = Brush.horizontalGradient(listOf(CyberBorder, CyberAmber))
                         )
                     ) {
@@ -2192,7 +2191,7 @@ private fun CompliantSelfDefenseGuardCard(
                     .testTag("btn_simulate_gateway_shift"),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                border = ButtonDefaults.outlinedButtonBorder.copy(
+                border = ButtonDefaults.outlinedButtonBorder(enabled = true).copy(
                     brush = Brush.horizontalGradient(listOf(CyberBorder, CyberCyan.copy(alpha = 0.6f)))
                 )
             ) {

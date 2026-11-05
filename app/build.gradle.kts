@@ -92,7 +92,8 @@ dependencies {
   // Room Database
   implementation(libs.androidx.room.runtime)
   implementation(libs.androidx.room.ktx)
-  "ksp"(libs.androidx.room.compiler)
+  "kspDebug"(libs.androidx.room.compiler)
+  "kspRelease"(libs.androidx.room.compiler)
 
   // Coroutines & Concurrency
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
@@ -137,5 +138,50 @@ dependencies {
   androidTestImplementation(libs.androidx.runner)
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
-  "ksp"(libs.moshi.kotlin.codegen)
+  // "ksp"(libs.moshi.kotlin.codegen)
+}
+
+// Guard against KSP embedded IntelliJ CoreApplicationEnvironment asynchronous AWT-EventQueue-0
+// callback (BinaryFileTypeDecompilers) firing after KSP disposes ApplicationManager.application.
+tasks.matching { it.name.startsWith("ksp") }.configureEach {
+  if (name.contains("Test", ignoreCase = true)) {
+    enabled = false
+  }
+  doFirst {
+    val kspAwtHandler = Thread.UncaughtExceptionHandler { thread, throwable ->
+      val isKspAwtNpe = thread.name.startsWith("AWT-EventQueue") &&
+        throwable is NullPointerException &&
+        throwable.stackTrace.any { it.className.startsWith("ksp.com.intellij.") }
+      if (!isKspAwtNpe) {
+        System.err.print("Exception in thread \"${thread.name}\" ")
+        throwable.printStackTrace(System.err)
+      }
+    }
+    Thread.setDefaultUncaughtExceptionHandler(kspAwtHandler)
+    try {
+      val eqClass = Class.forName("java.awt.EventQueue")
+      val isDispatch = eqClass.getMethod("isDispatchThread").invoke(null) as Boolean
+      if (!isDispatch) {
+        val invokeAndWait = eqClass.getMethod("invokeAndWait", Runnable::class.java)
+        invokeAndWait.invoke(null, Runnable {
+          Thread.currentThread().uncaughtExceptionHandler = kspAwtHandler
+        })
+      }
+      Thread.getAllStackTraces().keys
+        .filter { it.name.startsWith("AWT-EventQueue") }
+        .forEach { it.uncaughtExceptionHandler = kspAwtHandler }
+    } catch (_: Throwable) {
+    }
+  }
+  doLast {
+    try {
+      val eqClass = Class.forName("java.awt.EventQueue")
+      val isDispatch = eqClass.getMethod("isDispatchThread").invoke(null) as Boolean
+      if (!isDispatch) {
+        val invokeAndWait = eqClass.getMethod("invokeAndWait", Runnable::class.java)
+        invokeAndWait.invoke(null, Runnable {})
+      }
+    } catch (_: Throwable) {
+    }
+  }
 }

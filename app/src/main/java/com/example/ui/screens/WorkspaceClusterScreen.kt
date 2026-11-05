@@ -125,12 +125,16 @@ fun WorkspaceClusterScreen(
     val lastFlightResult by viewModel.lastFlightResult.collectAsState()
     val isFlightRunning by viewModel.isFlightRunning.collectAsState()
     val isClusterSyncing by viewModel.isClusterSyncing.collectAsState()
+    val linuxNodes by viewModel.linuxNodes.collectAsState()
+    val linuxAlerts by viewModel.linuxAlerts.collectAsState()
+    val linuxHubState by viewModel.linuxHubState.collectAsState()
 
     var activeSubTab by remember { mutableIntStateOf(0) }
     // 0: Native Backup & Clusters
     // 1: Nodes Pergamus
     // 2: Trial & Error Library (Sources-Data)
     // 3: Recurring Beta Testers
+    // 4: Linux Desktop Sentry
 
     // Dialog States
     var showCreateBackupDialog by remember { mutableStateOf(false) }
@@ -162,7 +166,8 @@ fun WorkspaceClusterScreen(
             backupCount = backupSnapshots.size,
             nodeCount = pergamusNodes.size,
             trialCount = trialEntries.size,
-            testerCount = betaTesters.size
+            testerCount = betaTesters.size,
+            linuxCount = linuxNodes.size
         )
 
         // Tab Content
@@ -223,6 +228,15 @@ fun WorkspaceClusterScreen(
                     onEnrollTester = { showEnrollTesterDialog = true },
                     onSubmitFeedback = { showFeedbackDialog = true },
                     onViewLastFlight = { showFlightResultDialog = true }
+                )
+                4 -> LinuxDesktopSentryTab(
+                    nodes = linuxNodes,
+                    hubState = linuxHubState,
+                    alerts = linuxAlerts,
+                    onToggleHubServer = { viewModel.toggleLinuxHubServer() },
+                    onToggleIsolateNode = { viewModel.toggleIsolateLinuxNode(it) },
+                    onRemoveNode = { viewModel.removeLinuxNode(it) },
+                    onAddManualNode = { h, ip, d -> viewModel.registerManualLinuxNode(h, ip, d) }
                 )
             }
         }
@@ -478,13 +492,15 @@ private fun WorkspaceSubTabBar(
     backupCount: Int,
     nodeCount: Int,
     trialCount: Int,
-    testerCount: Int
+    testerCount: Int,
+    linuxCount: Int
 ) {
     val tabs = listOf(
         "💾 Native Backup ($backupCount)",
         "🌐 Nodes Pergamus ($nodeCount)",
         "📚 Trial & Error ($trialCount)",
-        "👥 Recurring Beta ($testerCount)"
+        "👥 Recurring Beta ($testerCount)",
+        "🐧 Linux Desktop ($linuxCount)"
     )
 
     Row(

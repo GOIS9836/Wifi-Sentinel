@@ -197,6 +197,7 @@ class NetworkMonitorService : Service() {
 
         wifiBroadcastReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
+                @Suppress("DEPRECATION")
                 when (intent?.action) {
                     WifiManager.RSSI_CHANGED_ACTION,
                     WifiManager.NETWORK_STATE_CHANGED_ACTION,
@@ -326,13 +327,17 @@ class NetworkMonitorService : Service() {
          * Starts the NetworkMonitorService.
          */
         fun start(context: Context) {
+            try {
+                _metrics.value = queryCurrentMetrics(context)
+                _isMonitoringActive.value = true
+            } catch (_: Exception) {}
             val intent = Intent(context, NetworkMonitorService::class.java).apply {
                 action = ACTION_START_MONITOR
             }
             try {
                 context.startService(intent)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to start NetworkMonitorService", e)
+                Log.w(TAG, "Background service start restricted; using direct metric snapshot: ${e.message}")
             }
         }
 
@@ -340,13 +345,14 @@ class NetworkMonitorService : Service() {
          * Stops the NetworkMonitorService.
          */
         fun stop(context: Context) {
+            _isMonitoringActive.value = false
             val intent = Intent(context, NetworkMonitorService::class.java).apply {
                 action = ACTION_STOP_MONITOR
             }
             try {
-                context.startService(intent)
+                context.stopService(intent)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to stop NetworkMonitorService", e)
+                Log.w(TAG, "Failed to stop NetworkMonitorService: ${e.message}")
             }
         }
 
@@ -354,13 +360,16 @@ class NetworkMonitorService : Service() {
          * Requests an immediate metric refresh.
          */
         fun refresh(context: Context) {
+            try {
+                _metrics.value = queryCurrentMetrics(context)
+            } catch (_: Exception) {}
             val intent = Intent(context, NetworkMonitorService::class.java).apply {
                 action = ACTION_REFRESH_NOW
             }
             try {
                 context.startService(intent)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to send refresh intent", e)
+                Log.w(TAG, "Direct metric snapshot updated (service refresh skipped): ${e.message}")
             }
         }
 

@@ -145,6 +145,8 @@ fun SecurityScreen(
     val summaryReport by viewModel.networkSummaryReport.collectAsState()
     val isGeneratingReport by viewModel.isGeneratingReport.collectAsState()
     val rogueApReport by viewModel.rogueApReport.collectAsState()
+    val isStrictNearbyDistrust by viewModel.isStrictNearbyDistrustActive.collectAsState()
+    val blockedNearbyBssids by viewModel.blockedNearbyBssids.collectAsState()
     val liveNow by rememberLiveCurrentTime()
 
     var selectedFilter by remember { mutableStateOf("ALL") } // ALL, UNAUTHORIZED, FP_SUPPRESSED, AUTHORIZED
@@ -237,6 +239,18 @@ fun SecurityScreen(
                 isShieldActive = isShieldActive,
                 isScanning = isScanning,
                 lastScanTimestamp = backgroundStatus.lastScanTimestamp
+            )
+        }
+
+        // Strict Zero-Trust Nearby Device Isolation Banner ("I Don't Trust Nearby Devices")
+        item {
+            StrictNearbyDistrustBannerCard(
+                isStrictDistrustActive = isStrictNearbyDistrust,
+                isolatedApCount = blockedNearbyBssids.size,
+                blockedLanCount = devices.count { it.isBlocked },
+                quarantinedBleCount = btDevices.count { it.isQuarantined },
+                onToggleStrictDistrust = { viewModel.toggleStrictNearbyDistrust(it) },
+                onEnforceLockdown = { viewModel.enforceStrictNearbyDistrustLockdown() }
             )
         }
 
@@ -799,6 +813,96 @@ private fun RealtimeTelemetryClockBanner(
                     fontFamily = FontFamily.Monospace
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun StrictNearbyDistrustBannerCard(
+    isStrictDistrustActive: Boolean,
+    isolatedApCount: Int,
+    blockedLanCount: Int,
+    quarantinedBleCount: Int,
+    onToggleStrictDistrust: (Boolean) -> Unit,
+    onEnforceLockdown: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isStrictDistrustActive) Color(0xFF1D0A12) else CyberSurfaceVariant)
+            .border(
+                1.dp,
+                if (isStrictDistrustActive) CyberRed.copy(alpha = 0.8f) else CyberBorder,
+                RoundedCornerShape(16.dp)
+            )
+            .padding(14.dp)
+            .testTag("security_strict_nearby_distrust_card"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Block,
+                    contentDescription = null,
+                    tint = if (isStrictDistrustActive) CyberRed else TextMuted,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "ZERO-TRUST NEARBY DEVICE ISOLATION",
+                        color = if (isStrictDistrustActive) CyberRed else TextPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = if (isStrictDistrustActive) {
+                            "Private/randomized MACs, nearby AP BSSIDs ($isolatedApCount), LAN hosts ($blockedLanCount) & BLE ($quarantinedBleCount) isolated"
+                        } else {
+                            "Enable to distrust & block all unwhitelisted nearby devices"
+                        },
+                        color = TextSecondary,
+                        fontSize = 11.sp
+                    )
+                }
+            }
+
+            Switch(
+                checked = isStrictDistrustActive,
+                onCheckedChange = onToggleStrictDistrust,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = CyberRed,
+                    checkedTrackColor = CyberRed.copy(alpha = 0.3f),
+                    uncheckedThumbColor = TextMuted,
+                    uncheckedTrackColor = CyberSurfaceElevated
+                )
+            )
+        }
+
+        Button(
+            onClick = onEnforceLockdown,
+            colors = ButtonDefaults.buttonColors(containerColor = CyberRed),
+            shape = RoundedCornerShape(8.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(34.dp)
+        ) {
+            Text(
+                text = "Lock Down All Nearby LAN, Wi-Fi BSSID & BLE Devices",
+                color = Color.White,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }

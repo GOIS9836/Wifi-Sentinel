@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/env python3
+#!/usr/bin/env python3
 """
 =============================================================================
  GLOBAL OPIFEX HUB-SIEM • WIFI SENTINEL UNIFIED TEST HARNESS & SOC SENTRY
@@ -20,7 +20,7 @@ import hashlib
 import argparse
 import urllib.request
 import urllib.error
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Set, Any, Tuple, Optional
 
 # ANSI Tactical Palette
 C_RESET = "\033[0m"

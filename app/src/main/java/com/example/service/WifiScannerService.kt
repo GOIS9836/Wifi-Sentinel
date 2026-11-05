@@ -107,7 +107,13 @@ class WifiScannerService(private val context: Context) {
             val results = wifiManager?.scanResults
             if (!results.isNullOrEmpty()) {
                 for (scan in results) {
-                    val ssid = scan.SSID.ifBlank { "Hidden Network (${scan.BSSID.takeLast(5)})" }
+                    val rawSsid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        scan.wifiSsid?.toString()?.removeSurrounding("\"") ?: ""
+                    } else {
+                        @Suppress("DEPRECATION")
+                        scan.SSID ?: ""
+                    }
+                    val ssid = rawSsid.ifBlank { "Hidden Network (${scan.BSSID.takeLast(5)})" }
                     val freq = scan.frequency
                     apList.add(
                         NearbyAccessPoint(
@@ -289,7 +295,27 @@ class WifiScannerService(private val context: Context) {
                 }
             }
         } catch (e: Exception) {
-            // Proc net arp blocked on Android 10+ SELinux
+            // Proc net arp blocked on Android 10+ SELinux — fallback to ip neigh show
+        }
+        if (map.isEmpty()) {
+            try {
+                val proc = ProcessBuilder("ip", "neigh", "show").redirectErrorStream(true).start()
+                proc.inputStream.bufferedReader().useLines { lines ->
+                    lines.forEach { line ->
+                        val parts = line.trim().split("\\s+".toRegex())
+                        val ip = parts.firstOrNull() ?: return@forEach
+                        val lladdrIdx = parts.indexOf("lladdr")
+                        if (lladdrIdx != -1 && lladdrIdx + 1 < parts.size) {
+                            val mac = parts[lladdrIdx + 1].uppercase()
+                            if (mac != "00:00:00:00:00:00" && mac.length == 17) {
+                                map[ip] = mac
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+                // Non-root userland fallback handled gracefully
+            }
         }
         return map
     }

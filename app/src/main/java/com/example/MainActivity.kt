@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import com.example.service.SecurityNotificationDispatcher
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -169,6 +170,14 @@ fun SentinelApp(viewModel: MainViewModel) {
 
     var showWorkspaceHub by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = showWorkspaceHub || selectedTab != 0) {
+        if (showWorkspaceHub) {
+            showWorkspaceHub = false
+        } else {
+            selectedTab = 0
+        }
+    }
+
     if (showWorkspaceHub) {
         WorkspaceClusterScreen(
             viewModel = viewModel,
@@ -178,6 +187,7 @@ fun SentinelApp(viewModel: MainViewModel) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = CyberSurface,
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
             topBar = {
                 SentinelTopBar(
                     ssid = wifiState.ssid,

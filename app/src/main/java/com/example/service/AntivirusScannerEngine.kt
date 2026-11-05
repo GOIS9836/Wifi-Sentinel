@@ -227,6 +227,15 @@ object AntivirusScannerEngine {
 
         // Heuristics:
         // 1. Accessibility + Overlay combination (frequent banking trojan / RAT tactic)
+        // Determine trusted origin to prevent false positives for legitimate apps
+        val isTrustedStore = installerSource == "Google Play" ||
+                installerSource == "Package Installer" ||
+                installerSource == "System Image" ||
+                installerSource == "System"
+
+        val isTrustedSigner = isSystem || isTrustedStore ||
+                (analyzerResult != null && analyzerResult.threatLevel == ThreatLevel.SAFE)
+
         val hasAccessibility = "android.permission.BIND_ACCESSIBILITY_SERVICE" in requestedPermissions
         val hasOverlay = "android.permission.SYSTEM_ALERT_WINDOW" in requestedPermissions
         val hasInstallPackages = "android.permission.REQUEST_INSTALL_PACKAGES" in requestedPermissions
@@ -244,8 +253,12 @@ object AntivirusScannerEngine {
             }
 
             if (hasInstallPackages) {
-                riskScore += 25
-                reasons.add("Can silently request installation of unknown APK packages (Dropper vector)")
+                if (!isTrustedSigner) {
+                    riskScore += 25
+                    reasons.add("Can silently request installation of unknown APK packages (Dropper vector)")
+                } else {
+                    reasons.add("Package installer capability for verified internal updates (Verified Source)")
+                }
             }
 
             if ("android.permission.BIND_DEVICE_ADMIN" in requestedPermissions) {
@@ -261,8 +274,13 @@ object AntivirusScannerEngine {
             val smsPermissions = listOf("android.permission.READ_SMS", "android.permission.RECEIVE_SMS", "android.permission.SEND_SMS")
             val hasSms = smsPermissions.any { it in requestedPermissions }
             if (hasSms) {
-                riskScore += 20
-                reasons.add("Can access or intercept SMS text messages (2FA interception risk)")
+                if (!isTrustedSigner) {
+                    riskScore += 20
+                    reasons.add("Can access or intercept SMS text messages (2FA interception risk)")
+                } else {
+                    riskScore += 5
+                    reasons.add("SMS Verification / 2FA retriever access (Verified Application)")
+                }
             }
 
             // 7. Dynamic Code Loading (DCL)
@@ -274,15 +292,27 @@ object AntivirusScannerEngine {
             // 8. POTRAZ Chapter 12:07 Hardware / Telephony Identifier Harvesting
             val hasPhoneState = "android.permission.READ_PHONE_STATE" in requestedPermissions ||
                     "android.permission.READ_PRIVILEGED_PHONE_STATE" in requestedPermissions
-            if (hasPhoneState || dexHeuristics.hasPotrazIdentifierHarvesting) {
+            if (dexHeuristics.hasPotrazIdentifierHarvesting && !isTrustedSigner) {
                 riskScore += 25
                 reasons.add("POTRAZ Chapter 12:07 Breach: Hardware/Subscriber Identifier Harvester (IMEI / Device ID / Telephony access)")
+            } else if (hasPhoneState) {
+                if (!isTrustedSigner) {
+                    riskScore += 15
+                    reasons.add("Telephony State Access: Non-verified app accesses cellular carrier details (Potential identifier harvesting)")
+                } else {
+                    reasons.add("POTRAZ Chapter 12:07 Notice: Telephony State Access (Statutory data minimization compliant)")
+                }
             }
 
             // 9. Cleartext HTTP Network Exfiltration
             if (finalCleartext) {
-                riskScore += 20
-                reasons.add("Network Security Violation: Cleartext HTTP endpoints detected (MiTM and wire sniffing exposure on Wi-Fi)")
+                if (!isTrustedSigner) {
+                    riskScore += 20
+                    reasons.add("Network Security Violation: Cleartext HTTP endpoints detected (MiTM and wire sniffing exposure on Wi-Fi)")
+                } else {
+                    riskScore += 5
+                    reasons.add("Network Security Notice: Cleartext HTTP traffic permitted for fallback endpoints")
+                }
             }
 
             // 10. Multi-vector Tapjacking & Invasive Surveillance
@@ -328,11 +358,24 @@ object AntivirusScannerEngine {
             }
         }
 
-        // Incorporate AppSecurityAnalyzer composite score if higher
-        val finalCompositeScore = if (analyzerResult != null && !isSystem) {
-            maxOf(riskScore, analyzerResult.compositeScore)
+        // Apply developer trust dampener to riskScore if trusted origin
+        val dampenedRiskScore = if (isTrustedSigner) {
+            (riskScore * 0.3).toInt()
         } else {
             riskScore
+        }
+
+        // Incorporate AppSecurityAnalyzer composite score
+        val finalCompositeScore = if (analyzerResult != null && !isSystem) {
+            if (isTrustedSigner) {
+                minOf(dampenedRiskScore, analyzerResult.compositeScore)
+            } else {
+                maxOf(riskScore, analyzerResult.compositeScore)
+            }
+        } else if (isSystem) {
+            0
+        } else {
+            dampenedRiskScore
         }
 
         if (finalCompositeScore >= 100) {
@@ -340,6 +383,8 @@ object AntivirusScannerEngine {
         }
 
         val riskLevel = when {
+            isSystem -> AppRiskLevel.SAFE
+            isTrustedSigner && finalCompositeScore < 30 -> AppRiskLevel.SAFE
             analyzerResult != null && !isSystem -> {
                 when (analyzerResult.threatLevel) {
                     ThreatLevel.CRITICAL -> AppRiskLevel.CRITICAL
@@ -391,7 +436,7 @@ object AntivirusScannerEngine {
             hasCleartextTraffic = finalCleartext,
             hasPotrazIdentifierHarvesting = dexHeuristics.hasPotrazIdentifierHarvesting || ("android.permission.READ_PHONE_STATE" in requestedPermissions),
             securityFindings = analyzerResult?.findings ?: emptyList(),
-            isTrustedSigner = false
+            isTrustedSigner = isTrustedSigner
         )
     }
 

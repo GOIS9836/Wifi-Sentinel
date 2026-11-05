@@ -1,6 +1,8 @@
 package com.example.data.repository
 
 import com.example.data.local.AppDatabase
+import com.example.data.local.DetectedThreatEntity
+import com.example.data.local.NetworkConnectionHistoryEntity
 import com.example.data.local.NetworkDeviceEntity
 import com.example.data.local.SecurityAlertEntity
 import com.example.data.local.SignalLogEntity
@@ -42,6 +44,13 @@ class WifiRepository(
     val unacknowledgedAlertsCount: Flow<Int> = database.securityAlertDao().getUnacknowledgedCount()
     val trustedGatewaysFlow: Flow<List<TrustedGateway>> = database.trustedGatewayDao().getAllTrustedGateways()
     val primaryTrustedGatewayFlow: Flow<TrustedGateway?> = database.trustedGatewayDao().getPrimaryGateway()
+
+    // Historical Network Connection & Threat Sentry Flows
+    val connectionHistoryFlow: Flow<List<NetworkConnectionHistoryEntity>> = database.networkConnectionHistoryDao().getAllConnectionHistory()
+    val connectionCountFlow: Flow<Int> = database.networkConnectionHistoryDao().getConnectionCount()
+    val detectedThreatsFlow: Flow<List<DetectedThreatEntity>> = database.detectedThreatDao().getAllThreats()
+    val activeThreatsFlow: Flow<List<DetectedThreatEntity>> = database.detectedThreatDao().getActiveThreats()
+    val activeThreatCountFlow: Flow<Int> = database.detectedThreatDao().getActiveThreatCount()
 
     val perimeterBtDevices: StateFlow<List<BtPerimeterDevice>> = btSentryScanner.perimeterDevices
     val isBtScanning: StateFlow<Boolean> = btSentryScanner.isScanning
@@ -417,5 +426,153 @@ class WifiRepository(
 
     suspend fun getAllTrustedGatewaysList(): List<TrustedGateway> {
         return database.trustedGatewayDao().getAllTrustedGateways().first()
+    }
+
+    // --- Historical Network Connection Operations (POTRAZ CDPA [Chapter 12:07] Compliant) ---
+
+    suspend fun recordConnectionSession(
+        ssid: String,
+        bssid: String,
+        gatewayIp: String,
+        gatewayMac: String,
+        localIp: String,
+        frequencyMhz: Int,
+        channel: Int,
+        securityType: String,
+        rssiDbm: Int,
+        linkSpeedMbps: Int,
+        safetyScore: Int = 100,
+        isCaptivePortal: Boolean = false,
+        dnsServers: String = "",
+        isVpnActive: Boolean = false,
+        notes: String = ""
+    ): Long {
+        val pseudonym = MacSanitizer.hashIdentifier("$bssid:$ssid")
+        val entity = NetworkConnectionHistoryEntity(
+            ssid = ssid,
+            bssid = bssid,
+            gatewayIp = gatewayIp,
+            gatewayMac = gatewayMac,
+            localIp = localIp,
+            frequencyMhz = frequencyMhz,
+            channel = channel,
+            securityType = securityType,
+            rssiDbm = rssiDbm,
+            linkSpeedMbps = linkSpeedMbps,
+            connectedTimestamp = System.currentTimeMillis(),
+            safetyScore = safetyScore,
+            pseudonymHash = pseudonym,
+            isCaptivePortal = isCaptivePortal,
+            dnsServers = dnsServers,
+            isVpnActive = isVpnActive,
+            notes = notes
+        )
+        return database.networkConnectionHistoryDao().insert(entity)
+    }
+
+    suspend fun insertConnectionHistory(entity: NetworkConnectionHistoryEntity): Long {
+        return database.networkConnectionHistoryDao().insert(entity)
+    }
+
+    suspend fun closeConnectionSession(id: Long, disconnectedTimestamp: Long = System.currentTimeMillis(), durationSeconds: Long) {
+        database.networkConnectionHistoryDao().closeSession(id, disconnectedTimestamp, durationSeconds)
+    }
+
+    suspend fun updateConnectionSafetyScore(id: Long, score: Int) {
+        database.networkConnectionHistoryDao().updateSafetyScore(id, score)
+    }
+
+    suspend fun getRecentConnections(limit: Int = 20): List<NetworkConnectionHistoryEntity> {
+        return database.networkConnectionHistoryDao().getRecentConnections(limit)
+    }
+
+    suspend fun getActiveConnection(): NetworkConnectionHistoryEntity? {
+        return database.networkConnectionHistoryDao().getActiveConnection()
+    }
+
+    suspend fun getConnectionById(id: Long): NetworkConnectionHistoryEntity? {
+        return database.networkConnectionHistoryDao().getConnectionById(id)
+    }
+
+    suspend fun deleteConnectionHistoryById(id: Long) {
+        database.networkConnectionHistoryDao().deleteById(id)
+    }
+
+    suspend fun pruneOldConnectionHistory(cutoffTimestamp: Long): Int {
+        return database.networkConnectionHistoryDao().deleteOlderThan(cutoffTimestamp)
+    }
+
+    suspend fun clearAllConnectionHistory() {
+        database.networkConnectionHistoryDao().clearAll()
+    }
+
+    // --- Detected Threats Operations (Statutory POTRAZ Minimization) ---
+
+    suspend fun recordDetectedThreat(
+        threatType: String,
+        severity: String,
+        title: String,
+        description: String,
+        sourceIp: String,
+        sourceMac: String,
+        targetSsid: String = "",
+        targetBssid: String = "",
+        channel: Int = 0,
+        rssiDbm: Int = 0,
+        mitigationAction: String = "",
+        confidencePercent: Int = 95
+    ): Long {
+        val pseudonym = MacSanitizer.hashIdentifier(sourceMac)
+        val threat = DetectedThreatEntity(
+            threatType = threatType,
+            severity = severity,
+            title = title,
+            description = description,
+            sourceIp = sourceIp,
+            sourceMac = sourceMac,
+            pseudonymHash = pseudonym,
+            targetSsid = targetSsid,
+            targetBssid = targetBssid,
+            channel = channel,
+            rssiDbm = rssiDbm,
+            mitigationAction = mitigationAction,
+            isMitigated = false,
+            isFalsePositive = false,
+            timestamp = System.currentTimeMillis(),
+            confidencePercent = confidencePercent
+        )
+        return database.detectedThreatDao().insert(threat)
+    }
+
+    suspend fun insertDetectedThreat(threat: DetectedThreatEntity): Long {
+        return database.detectedThreatDao().insert(threat)
+    }
+
+    suspend fun mitigateThreat(threatId: Long, mitigationAction: String) {
+        database.detectedThreatDao().updateMitigation(threatId, isMitigated = true, mitigationAction = mitigationAction)
+    }
+
+    suspend fun markThreatFalsePositive(threatId: Long) {
+        database.detectedThreatDao().markFalsePositive(threatId)
+    }
+
+    suspend fun markThreatFalsePositiveByMac(sourceMac: String) {
+        database.detectedThreatDao().markFalsePositiveByMac(sourceMac)
+    }
+
+    suspend fun getThreatById(id: Long): DetectedThreatEntity? {
+        return database.detectedThreatDao().getThreatById(id)
+    }
+
+    suspend fun getRecentThreats(limit: Int = 20): List<DetectedThreatEntity> {
+        return database.detectedThreatDao().getRecentThreatsList(limit)
+    }
+
+    suspend fun pruneOldThreats(cutoffTimestamp: Long): Int {
+        return database.detectedThreatDao().deleteOlderThan(cutoffTimestamp)
+    }
+
+    suspend fun clearAllDetectedThreats() {
+        database.detectedThreatDao().clearAll()
     }
 }
