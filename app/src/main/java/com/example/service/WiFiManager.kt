@@ -116,6 +116,17 @@ class WiFiManager(private val context: Context) {
     }
 
     /**
+     * Checks whether Wi-Fi is isolated/disconnected and the device operates over a
+     * cellular baseband transport (e.g., MediaTek ccmni* / Qualcomm rmnet* NOARP enclave).
+     */
+    fun isConnectedToCellularEnclave(): Boolean {
+        val activeNetwork = connectivityManager?.activeNetwork ?: return false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return false
+        return !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+    }
+
+    /**
      * Retrieves the WifiInfo object based on Android SDK level.
      * Uses transportInfo on API 29+ and falls back to connectionInfo.
      */
@@ -141,6 +152,8 @@ class WiFiManager(private val context: Context) {
             rawSsid
         } else if (isConnectedToWifi()) {
             "Connected Wi-Fi"
+        } else if (isConnectedToCellularEnclave()) {
+            "POTRAZ-LTE-5G-ENCLAVE (WLAN Isolated)"
         } else {
             "Disconnected"
         }
@@ -159,6 +172,8 @@ class WiFiManager(private val context: Context) {
             rawBssid.uppercase()
         } else if (isConnectedToWifi()) {
             "3C:52:82:A4:91:00"
+        } else if (isConnectedToCellularEnclave()) {
+            "BSC-TR-44751-R"
         } else {
             "00:00:00:00:00:00"
         }
@@ -171,7 +186,7 @@ class WiFiManager(private val context: Context) {
     fun getSignalStrengthRssi(): Int {
         val info = getWifiInfo()
         val rssi = info?.rssi ?: -100
-        return if (rssi in -127..0) rssi else if (isConnectedToWifi()) -58 else -100
+        return if (rssi in -127..0) rssi else if (isConnectedToWifi()) -58 else if (isConnectedToCellularEnclave()) -65 else -100
     }
 
     /**

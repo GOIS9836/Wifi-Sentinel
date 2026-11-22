@@ -181,4 +181,15 @@ object MacSanitizer {
 
         return false
     }
+
+    const val POTRAZ_BASEBAND_ID = "BSC-TR-44751-R"
+
+    /**
+     * Identifies MediaTek (ccmni*) and Qualcomm (rmnet*) point-to-point NOARP cellular
+     * baseband interfaces used when Wi-Fi radio is isolated in the field.
+     */
+    fun isCellularBasebandInterface(interfaceName: String): Boolean {
+        val lower = interfaceName.trim().lowercase()
+        return lower.startsWith("ccmni") || lower.startsWith("rmnet")
+    }
 }

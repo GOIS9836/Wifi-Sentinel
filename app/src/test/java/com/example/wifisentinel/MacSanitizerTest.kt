@@ -90,4 +90,14 @@ class MacSanitizerTest {
         assertFalse(MacSanitizer.isPotrazRestrictedTarget("https://potraz.gov.zw"))
         assertFalse(MacSanitizer.isPotrazRestrictedTarget("https://google.com"))
     }
+
+    @Test
+    fun isCellularBasebandInterface_identifiesMediatekAndQualcommModemEnclaves() {
+        assertTrue(MacSanitizer.isCellularBasebandInterface("ccmni1"))
+        assertTrue(MacSanitizer.isCellularBasebandInterface("ccmni0"))
+        assertTrue(MacSanitizer.isCellularBasebandInterface("rmnet_data0"))
+        assertFalse(MacSanitizer.isCellularBasebandInterface("wlan0"))
+        assertFalse(MacSanitizer.isCellularBasebandInterface(""))
+        assertEquals("BSC-TR-44751-R", MacSanitizer.POTRAZ_BASEBAND_ID)
+    }
 }
