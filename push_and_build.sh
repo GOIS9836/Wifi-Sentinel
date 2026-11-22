@@ -12,7 +12,7 @@ echo "║      GLOBAL OPIFEX HUB-SIEM • GITHUB CI DEPLOYMENT PIPELINE TRIGGER 
 echo "╠═════════════════════════════════════════════════════════════════════════════╣"
 echo "║ Target Repository : https://github.com/GOIS9836/Wifi-Sentinel.git          ║"
 echo "║ Active Branch     : main                                                    ║"
-echo "║ Target Device     : CUBOT KINGKONG 9 (Android 14 / API 34)                  ║"
+echo "║ Target Device     : CUBOT KINGKONG 8 / 9 (Android 13-14 / API 33-34)        ║"
 echo "║ CI Workflow       : .github/workflows/build-apk.yml                         ║"
 echo "╚═════════════════════════════════════════════════════════════════════════════╝"
 

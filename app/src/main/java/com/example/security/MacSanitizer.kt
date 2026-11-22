@@ -183,6 +183,12 @@ object MacSanitizer {
     }
 
     const val POTRAZ_BASEBAND_ID = "BSC-TR-44751-R"
+    const val WHITELISTED_KK8_MAC = "D8:88:CE:08:01:69"
+    const val WHITELISTED_KK8_IP = "192.168.1.169"
+
+    private val WHITELISTED_KINGKONG_MODELS = setOf(
+        "KINGKONG 8", "KINGKONG_8", "KINGKONG 9", "KINGKONG_9"
+    )
 
     /**
      * Identifies MediaTek (ccmni*) and Qualcomm (rmnet*) point-to-point NOARP cellular
@@ -191,5 +197,18 @@ object MacSanitizer {
     fun isCellularBasebandInterface(interfaceName: String): Boolean {
         val lower = interfaceName.trim().lowercase()
         return lower.startsWith("ccmni") || lower.startsWith("rmnet")
+    }
+
+    /**
+     * Authorizes Sovereign CUBOT KingKong 8 (KK8) and KingKong 9 field terminals.
+     */
+    fun isWhitelistedKingKongDevice(
+        manufacturer: String,
+        model: String,
+        deviceCode: String = ""
+    ): Boolean {
+        if (!manufacturer.trim().equals("CUBOT", ignoreCase = true)) return false
+        return model.trim().uppercase() in WHITELISTED_KINGKONG_MODELS ||
+            deviceCode.trim().uppercase() in WHITELISTED_KINGKONG_MODELS
     }
 }

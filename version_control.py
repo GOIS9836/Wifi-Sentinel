@@ -94,7 +94,7 @@ def display_status():
     print(f"{C_CYAN}║{C_RESET} {C_BOLD}Application    :{C_RESET} WiFi Sentinel (Android 14 / Target API 34)")
     print(f"{C_CYAN}║{C_RESET} {C_BOLD}Active Version :{C_RESET} {C_GREEN}{C_BOLD}v{info['version_name']}{C_RESET} (versionCode: {C_YELLOW}{info['version_code']}{C_RESET})")
     print(f"{C_CYAN}║{C_RESET} {C_BOLD}Git Tag / Head :{C_RESET} {C_PURPLE}{info['git_tag']}{C_RESET} on branch {C_CYAN}{info['git_branch']}{C_RESET} ({info['git_commit']})")
-    print(f"{C_CYAN}║{C_RESET} {C_BOLD}Target Device  :{C_RESET} CUBOT KINGKONG 9 (MediaTek Helio G99 / Linux aarch64)")
+    print(f"{C_CYAN}║{C_RESET} {C_BOLD}Target Device  :{C_RESET} CUBOT KINGKONG 8 / 9 (Android 13-14 / Linux aarch64)")
     print(f"{C_CYAN}║{C_RESET} {C_BOLD}Governance     :{C_RESET} SemVer 2.0.0 • CISSP D8 • POTRAZ CDPA [Chapter 12:07]")
     print(C_CYAN + C_BOLD + "╠═════════════════════════════════════════════════════════════════════════════╣" + C_RESET)
     print(C_CYAN + C_BOLD + "║ RELEASE ARTIFACT INVENTORY:                                                 ║" + C_RESET)

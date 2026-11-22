@@ -1,5 +1,5 @@
 {
-  "version": "Sentinel-4.2",
+  "version": "Sentinel-4.3-KK8",
   "trustedGateways": [
     {
       "gatewayIp": "192.168.1.1",
@@ -10,7 +10,8 @@
     }
   ],
   "whitelistedMacs": [
-    "b4:0f:3b:7f:a3:f0"
+    "b4:0f:3b:7f:a3:f0",
+    "d8:88:ce:08:01:69"
   ],
   "whitelistedEndpoints": [
     {
@@ -20,7 +21,11 @@
     },
     {
       "ip": "192.168.1.169",
-      "role": "Authorized Production Host"
+      "role": "Authorized CUBOT KingKong 8 (KK8 / u0_a169) — WiFi Sentinel Sovereign Host",
+      "mac": "d8:88:ce:08:01:69",
+      "deviceModel": "CUBOT KINGKONG 8",
+      "deviceCode": "KINGKONG_8",
+      "androidSdk": 33
     },
     {
       "ip": "192.168.1.229",
@@ -34,6 +39,28 @@
       "ip": "192.168.1.190",
       "role": "Authorized Pergamus Workstation (OpifexNetManager Host)",
       "mac": "2c:3b:70:c9:64:df"
+    }
+  ],
+  "whitelistedPackages": [
+    "com.aistudio.wifimanager.sentinel",
+    "com.opifex.wifisentinel",
+    "com.termux",
+    "com.termux.api"
+  ],
+  "whitelistedMobileNodes": [
+    {
+      "deviceId": "KINGKONG_8",
+      "manufacturer": "CUBOT",
+      "model": "KINGKONG 8",
+      "platform": "mt8788 / mt6771",
+      "androidRelease": "13",
+      "androidSdk": 33,
+      "termuxUid": "u0_a169",
+      "ip": "192.168.1.169",
+      "mac": "D8:88:CE:08:01:69",
+      "cellularIfaces": ["ccmni0", "ccmni1", "ccmni2"],
+      "potrazBasebandId": "BSC-TR-44751-R",
+      "status": "WHITELISTED_SOVEREIGN"
     }
   ],
   "autonomousQuarantinePolicy": {

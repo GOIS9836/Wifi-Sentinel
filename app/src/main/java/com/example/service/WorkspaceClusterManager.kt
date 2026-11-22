@@ -140,6 +140,20 @@ class WorkspaceClusterManager private constructor(private val context: Context) 
                 lastHeartbeatFormatted = "Live",
                 sourceDataCount = 580,
                 trialCount = 65
+            ),
+            PergamusClusterNode(
+                nodeId = "NODE-PERGAMUS-KK8",
+                clusterName = "Nodes Pergamus",
+                displayName = "Node Pergamus-KK8 (CUBOT KingKong 8 Sentinel)",
+                ipAddress = "192.168.1.169",
+                macAddress = "D8:88:CE:08:01:69",
+                role = "Mobile WiFi Sentinel & Baseband Guard",
+                status = NodeClusterStatus.HARDENED,
+                latencyMs = 2L,
+                uptimePercent = 100.0,
+                lastHeartbeatFormatted = "Live",
+                sourceDataCount = 640,
+                trialCount = 88
             )
         )
     )

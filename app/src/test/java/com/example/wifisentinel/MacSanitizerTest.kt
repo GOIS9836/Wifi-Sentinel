@@ -100,4 +100,11 @@ class MacSanitizerTest {
         assertFalse(MacSanitizer.isCellularBasebandInterface(""))
         assertEquals("BSC-TR-44751-R", MacSanitizer.POTRAZ_BASEBAND_ID)
     }
+
+    @Test
+    fun isWhitelistedKingKongDevice_authorizesKingKong8AndNonLaaMac() {
+        assertTrue(MacSanitizer.isWhitelistedKingKongDevice("CUBOT", "KINGKONG 8", "KINGKONG_8"))
+        assertFalse(MacSanitizer.isRandomizedMac(MacSanitizer.WHITELISTED_KK8_MAC))
+        assertFalse(MacSanitizer.isWhitelistedKingKongDevice("Unknown", "Generic"))
+    }
 }

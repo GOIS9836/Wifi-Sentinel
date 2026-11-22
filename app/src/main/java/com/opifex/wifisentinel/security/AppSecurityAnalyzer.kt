@@ -32,6 +32,30 @@ enum class ThreatLevel {
 
 class AppSecurityAnalyzer(private val context: Context) {
 
+    companion object {
+        val SOVEREIGN_WHITELISTED_PACKAGES = setOf(
+            "com.aistudio.wifimanager.sentinel",
+            "com.opifex.wifisentinel",
+            "com.termux",
+            "com.termux.api"
+        )
+        val WHITELISTED_CUBOT_MODELS = setOf(
+            "KINGKONG 8", "KINGKONG_8", "KINGKONG 9", "KINGKONG_9"
+        )
+
+        fun isSovereignWhitelistedPackage(packageName: String): Boolean =
+            packageName.trim() in SOVEREIGN_WHITELISTED_PACKAGES
+
+        fun isWhitelistedCubotDevice(
+            manufacturer: String = Build.MANUFACTURER ?: "",
+            model: String = Build.MODEL ?: "",
+            device: String = Build.DEVICE ?: ""
+        ): Boolean = manufacturer.equals("CUBOT", ignoreCase = true) && (
+            model.trim().uppercase() in WHITELISTED_CUBOT_MODELS ||
+            device.trim().uppercase() in WHITELISTED_CUBOT_MODELS
+        )
+    }
+
     // Known reputable developer certificate SHA-256 fingerprints (e.g., Meta, Google, Android OS)
     private val trustedCertHashes = setOf(
         "24:83:E6:E3:B3:28:B7:A9:E1:96:A2:3E:45:96:FF:A2:2C:9A:6E:9B:C9:47:DE:8E:B0:81:4A:23:45:11:AB:CD", // Sample SHA-256
@@ -76,6 +100,7 @@ class AppSecurityAnalyzer(private val context: Context) {
         val isTrustedSigner = verifyDeveloperSignature(pkgInfo) ||
                 isSystemApp ||
                 isInstallerTrusted(pm, packageName) ||
+                isSovereignWhitelistedPackage(packageName) ||
                 packageName == context.packageName
 
         // 1. Evaluate Requested Permissions
