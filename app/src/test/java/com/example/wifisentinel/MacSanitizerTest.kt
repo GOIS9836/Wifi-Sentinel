@@ -51,14 +51,14 @@ class MacSanitizerTest {
 
     @Test
     fun maskMsisdn_redactsZimbabweanPhoneNumbersUnderChapter1207() {
-        val maskedIntl = MacSanitizer.maskMsisdn("+263771234567")
-        assertEquals("+263 77 *** 4567", maskedIntl)
+        val maskedIntl = MacSanitizer.maskMsisdn("+263772528739")
+        assertEquals("+263 77 *** 8739", maskedIntl)
 
-        val maskedDomestic = MacSanitizer.maskMsisdn("0771234567")
-        assertEquals("077 *** 4567", maskedDomestic)
+        val maskedDomestic = MacSanitizer.maskMsisdn("0772528739")
+        assertEquals("077 *** 8739", maskedDomestic)
 
-        val maskedNoPlus = MacSanitizer.maskMsisdn("263771234567")
-        assertEquals("+263 77 *** 4567", maskedNoPlus)
+        val maskedNoPlus = MacSanitizer.maskMsisdn("263772528739")
+        assertEquals("+263 77 *** 8739", maskedNoPlus)
     }
 
     @Test
@@ -74,11 +74,11 @@ class MacSanitizerTest {
 
     @Test
     fun sanitizeTelecomPii_replacesEmbeddedPiiInRawStrings() {
-        val raw = "Subscriber with MSISDN +263771234567 and ICCID 8926301234567890123 connected."
+        val raw = "Subscriber with MSISDN +263772528739 and ICCID 8926301234567890123 connected."
         val sanitized = MacSanitizer.sanitizeTelecomPii(raw)
-        assertFalse(sanitized.contains("+263771234567"))
+        assertFalse(sanitized.contains("+263772528739"))
         assertFalse(sanitized.contains("8926301234567890123"))
-        assertTrue(sanitized.contains("+263 77 *** 4567"))
+        assertTrue(sanitized.contains("+263 77 *** 8739"))
         assertTrue(sanitized.contains("89263-XXXX-XXXX-90123"))
     }
 

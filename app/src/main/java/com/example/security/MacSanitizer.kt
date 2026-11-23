@@ -90,7 +90,7 @@ object MacSanitizer {
 
     /**
      * Masks Zimbabwean subscriber phone numbers (MSISDN) to protect PII.
-     * Example: "+263771234567" -> "+263 77 *** 4567", "0771234567" -> "077 *** 4567"
+     * Example: "+263772528739" -> "+263 77 *** 8739", "0772528739" -> "077 *** 8739"
      */
     fun maskMsisdn(msisdn: String): String {
         val digits = msisdn.replace(Regex("""\s+"""), "")
@@ -187,7 +187,7 @@ object MacSanitizer {
     const val WHITELISTED_KK8_IP = "192.168.1.169"
 
     private val WHITELISTED_KINGKONG_MODELS = setOf(
-        "KINGKONG 8", "KINGKONG_8", "KINGKONG 9", "KINGKONG_9"
+        "KINGKONG 8", "KINGKONG_8"
     )
 
     /**
@@ -200,7 +200,7 @@ object MacSanitizer {
     }
 
     /**
-     * Authorizes Sovereign CUBOT KingKong 8 (KK8) and KingKong 9 field terminals.
+     * Authorizes Sovereign CUBOT KingKong 8 (KK8) field terminal (KK9 deregistered).
      */
     fun isWhitelistedKingKongDevice(
         manufacturer: String,

@@ -105,7 +105,7 @@ FORBIDDEN_CONTENT_KEYWORDS = {
 def mask_msisdn(msisdn: str) -> str:
     """
     Masks Zimbabwean subscriber phone numbers (MSISDN) to protect PII.
-    Example: '+263771234567' -> '+263 77 *** 4567', '0771234567' -> '077 *** 4567'
+    Example: '+263772528739' -> '+263 77 *** 8739', '0772528739' -> '077 *** 8739'
     """
     digits = re.sub(r"\s+", "", msisdn)
     if digits.startswith("+263") and len(digits) >= 12:
@@ -604,12 +604,12 @@ class SentinelTestBattery:
         self.execute_test(c, "malformedInputsAndEdgeCases_gracefullyHandledWithoutException", t4)
 
         def t5():
-            masked_intl = mask_msisdn("+263771234567")
-            assert masked_intl == "+263 77 *** 4567", f"Expected '+263 77 *** 4567', got '{masked_intl}'"
-            masked_dom = mask_msisdn("0771234567")
-            assert masked_dom == "077 *** 4567", f"Expected '077 *** 4567', got '{masked_dom}'"
-            masked_noplus = mask_msisdn("263771234567")
-            assert masked_noplus == "+263 77 *** 4567", f"Expected '+263 77 *** 4567', got '{masked_noplus}'"
+            masked_intl = mask_msisdn("+263772528739")
+            assert masked_intl == "+263 77 *** 8739", f"Expected '+263 77 *** 8739', got '{masked_intl}'"
+            masked_dom = mask_msisdn("0772528739")
+            assert masked_dom == "077 *** 8739", f"Expected '077 *** 8739', got '{masked_dom}'"
+            masked_noplus = mask_msisdn("263772528739")
+            assert masked_noplus == "+263 77 *** 8739", f"Expected '+263 77 *** 8739', got '{masked_noplus}'"
         self.execute_test(c, "maskMsisdn_redactsZimbabweanPhoneNumbersUnderChapter1207", t5)
 
         def t6():
@@ -620,11 +620,11 @@ class SentinelTestBattery:
         self.execute_test(c, "maskIccidAndImsi_shieldsTelecomHardwareIdentities", t6)
 
         def t7():
-            raw = "Subscriber with MSISDN +263771234567 and ICCID 8926301234567890123 connected."
+            raw = "Subscriber with MSISDN +263772528739 and ICCID 8926301234567890123 connected."
             sanitized = sanitize_telecom_pii(raw)
-            assert "+263771234567" not in sanitized
+            assert "+263772528739" not in sanitized
             assert "8926301234567890123" not in sanitized
-            assert "+263 77 *** 4567" in sanitized
+            assert "+263 77 *** 8739" in sanitized
             assert "89263-XXXX-XXXX-90123" in sanitized
         self.execute_test(c, "sanitizeTelecomPii_replacesEmbeddedPiiInRawStrings", t7)
 

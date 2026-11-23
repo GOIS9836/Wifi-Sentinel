@@ -40,7 +40,7 @@ class AppSecurityAnalyzer(private val context: Context) {
             "com.termux.api"
         )
         val WHITELISTED_CUBOT_MODELS = setOf(
-            "KINGKONG 8", "KINGKONG_8", "KINGKONG 9", "KINGKONG_9"
+            "KINGKONG 8", "KINGKONG_8"
         )
 
         fun isSovereignWhitelistedPackage(packageName: String): Boolean =
